@@ -4,7 +4,7 @@ https://github.com/OsmanMalik/tucker-tensorsketch/blob/master/tucker_ts.m
 """
 
 from functools import reduce
-from typing import Union, Tuple
+from typing import *
 
 
 import torch
@@ -17,6 +17,9 @@ import numpy as np
 from torch.fft import fft, ifft
 import warnings
 # from time import time
+
+from tdecomp.utils import svd_solver_tikhonov
+
 
 tl.set_backend('pytorch')
 
@@ -48,9 +51,6 @@ def tucker_ts(Y: torch.Tensor, r, J1, J2, tol=1e-3, maxiters=50, verbose=False, 
     factors : list
         List of factor matrices
     """
-    rmin = min(r)
-    assert J1 <= rmin and J2 <= rmin
-    # with torch.set_grad_enabled(): TODO
 
     sizeY = Y.size()
     n_dim = Y.ndim 
@@ -78,8 +78,7 @@ def tucker_ts(Y: torch.Tensor, r, J1, J2, tol=1e-3, maxiters=50, verbose=False, 
                 mode='reduced')[0] # size[n] x r[n]
         factors.append(Q)        
         # Compute count sketch
-        As1_hat.append(fft(count_sketch(Q, h1[n], J1, s[n]), axis=1)) # CHANGED: Q not transposed
-        print('Q', Q.size(), 'As1_hat', As1_hat[-1].size())
+        As1_hat.append(fft(count_sketch(Q, h1[n], J1, s[n]), axis=1)) # CHANGED: Q transposed
     
     # Compute sketches of input tensor
     YsT = []
@@ -89,6 +88,7 @@ def tucker_ts(Y: torch.Tensor, r, J1, J2, tol=1e-3, maxiters=50, verbose=False, 
         print('Starting to compute sketches of input tensor...')
     
     if sflag:
+        # TODO from root repository
         def sparse_sketch(Y, YsT, nnzY):
             # Sparse tensor case
             for n in range(n_dim):
@@ -117,20 +117,11 @@ def tucker_ts(Y: torch.Tensor, r, J1, J2, tol=1e-3, maxiters=50, verbose=False, 
             )
             return YsT, vecYs
         YsT, vecYs = sparse_sketch(Y, YsT, nnzY)
-
-    # elif extflag:
-    #     # External computation case
-    #     sketch_func = Y[0]
-    #     if len(Y) > 2:
-    #         sketch_params = (J1, J2, h1, h2, s, verbose, *Y[2:])
-    #     else:
-    #         sketch_params = (J1, J2, h1, h2, s, verbose)
-        
-    #     YsT, vecYs = sketch_func(*sketch_params)
     else:
         # Dense tensor case
         for n in range(n_dim):
             mode_n_unfolding = unfold(Y, n)
+            # from TensorSketchMatC3_git
             YsT.append(tensor_sketch_mat(mode_n_unfolding, 
                                        [h1[i] for i in range(n_dim) if i != n],
                                        [s[i] for i in range(n_dim) if i != n],
@@ -139,6 +130,7 @@ def tucker_ts(Y: torch.Tensor, r, J1, J2, tol=1e-3, maxiters=50, verbose=False, 
                 print(f'Finished computing sketch {n + 1} out of {n_dim + 1}...')
         
         vecYs = tensor_sketch_vec(Y, h2, s, J2)
+        assert vecYs.shape == (J2,)
 
     if verbose:
         print('Finished computing all sketches')
@@ -151,49 +143,35 @@ def tucker_ts(Y: torch.Tensor, r, J1, J2, tol=1e-3, maxiters=50, verbose=False, 
     for iter in range(maxiters):
         norm_core_old = norm_core
         for n in range(n_dim):
-            # TensorSketch the Kronecker product and compute sketched LS problem
-            print('As1:', [
-                t.size() for t in As1_hat
-            ])
             kr_prod = khatri_rao([As1_hat[i].T for i in range(n_dim) if i != n])
             core_unfolding = unfold(core, n).to(torch.complex64)
-            
+
             # Solve least squares problem
-            mat = ifft((core_unfolding @ kr_prod).T, axis=1).float() 
-            print(mat.size(), YsT[n].size())
-            factor = torch.linalg.lstsq(mat, YsT[n]).solution.T
+            mat = ifft((core_unfolding @ kr_prod).T, axis=1).real.T
+            factor = torch.linalg.lstsq(mat.T, YsT[n]).solution        
             
             # Orthogonalize factor matrix and update core tensor
-            Q, R = torch.qr(factor)
-            factors[n] = Q
-            core = fold(R @ unfold(core, n), n, core.shape)
-            
+            Q, R = torch.linalg.qr(factor.T, mode='reduced')
+            core = fold(R.T @ unfold(core, n), n, core.shape) # TODO check if R or R.T
             # Update As1_hat[n]
-            As1_hat[n] = fft(count_sketch(factor.T, h1[n], J1, s[n]), axis=1)
-            factors[n] = factor
+            As1_hat[n] = fft(count_sketch(Q, h1[n], J1, s[n]), axis=1)
+            # print('As1', As1_hat[n].size())
+            factors[n] = Q
         
         # TensorSketch the Kronecker product using hash functions
         As2_hat = []
         for n in range(n_dim):
-            As2_hat.append(fft(count_sketch(factors[n].T, h2[n], J2, s[n]), axis=1))
-        
-        M2 = ifft(khatri_rao(As2_hat).T, axis=1)
-        M2tM2 = M2.T @ M2
-        M2tvecYs = M2.T @ vecYs
-        
-        def matvec(x):
-            return M2tM2 @ x
+            As2_hat.append(fft(count_sketch(factors[n], h2[n], J2, s[n]), axis=1).T)
+        M2 = ifft(khatri_rao(As2_hat).T, axis=1).real
 
-        core_vec, _ = torch.linalg.cg(
-            A = matvec,     
-            b = M2tvecYs,
-            tol = 1e-5
-        )
-        core = torch.tensor(core_vec.reshape(core.shape), device=core.device)
+        core_vec = svd_solver_tikhonov(M2, vecYs)
+
+        core = core_vec.reshape(core.shape)
+        assert not torch.isnan(core).any()
         
         # Compute fit
         norm_core = torch.norm(core)
-        norm_change = abs(norm_core - norm_core_old)
+        norm_change = abs(norm_core - norm_core_old) / (norm_core_old + 1e-8)
         if verbose:
             print(f' Iter {iter+1:2d}: normChange = {norm_change:7.1e}')
         
@@ -235,191 +213,151 @@ def count_sketch(A, h, J, s):
     # print(sketch.size(), 'sketch')
     return sketch
 
-def tensor_sketch_mat(A, h_list, s_list, J):
-    """Tensor sketch of matrix unfolding.
+# def tensor_sketch_mat(A, h_list, s_list, J):
+#     """Tensor sketch of matrix unfolding.
     
-    Parameters
-    ----------
-    A : torch.Tensor
-        Matrix unfolding of tensor (I x prod(I_other))
-    h_list : list
-        List of hash functions for each mode
-    s_list : list
-        List of sign functions for each mode
-    J : int
-        Sketch dimension
+#     Parameters
+#     ----------
+#     A : torch.Tensor
+#         Matrix unfolding of tensor (I x prod(I_other))
+#     h_list : list
+#         List of hash functions for each mode
+#     s_list : list
+#         List of sign functions for each mode
+#     J : int
+#         Sketch dimension
         
-    Returns
-    -------
-    sketch : torch.Tensor
-        Tensor sketch of A (J x prod(I_other))
-    """
-    # Count sketch along each mode
-    sketches = []
-    for h, s in zip(h_list, s_list):
-        sketches.append(count_sketch(A, h, J, s)) # CHANGED: A not transposed
-    # Multiply sketches element-wise
-    
-    return reduce(torch.mul, sketches)
-
-def tensor_sketch_vec(Y, h_list, s_list, J):
-    """Tensor sketch of tensor as vector.
-    
-    Parameters
-    ----------
-    Y : torch.Tensor
-        Input tensor
-    h_list : list
-        List of hash functions for each mode
-    s_list : list
-        List of sign functions for each mode
-    J : int
-        Sketch dimension
-        
-    Returns
-    -------
-    sketch : torch.Tensor
-        Tensor sketch of vec(Y) (J,)
-    """
-    # Flatten tensor
-    vecY = Y.reshape(-1)
-    
-    # Compute combined hash and sign functions
-    h_combined = 0
-    s_combined = torch.ones(vecY.shape[0], device=vecY.device)
-    
-    stride = 1
-    for n in range(len(h_list)):
-        dim = Y.shape[n]
-        indices = torch.arange(vecY.shape[0], device=vecY.device) // stride % dim
-        h_combined = (h_combined + h_list[n][indices]) % J
-        s_combined *= s_list[n][indices]
-        stride *= dim
-    
-    # Apply count sketch
-    return count_sketch(vecY.unsqueeze(1), h_combined, J, s_combined).squeeze()
-
-# def sparse_tensor_sketch_mat(values, indices, h_list, s_list, J, In, n):
-#     """Tensor sketch for sparse tensor along mode n."""
-#     # This would need a custom C++/CUDA implementation for efficiency
-#     # Placeholder implementation - would be very slow in Python
-#     warnings.warn("Using slow Python implementation for sparse tensor sketch")
-    
-#     # Get the dimensions
-#     other_dims = [h.shape[0] for h in h_list]
-#     other_size = np.prod(other_dims)
-    
-#     # Initialize result
-#     result = torch.zeros(J, In, device=values.device)
-    
-#     # Iterate through non-zero elements
-#     for val, idx in zip(values, indices.T):
-#         # Compute combined hash and sign
-#         h = 0
-#         s = 1.0
-#         stride = 1
-#         pos = 0
-        
-#         for i in range(len(indices)):
-#             if i == n:
-#                 in_idx = idx[i]
-#                 continue
-            
-#             dim = h_list[pos].shape[0]
-#             h = (h + h_list[pos][idx[i]]) % J
-#             s *= s_list[pos][idx[i]]
-#             pos += 1
-        
-#         # Update sketch
-#         result[h, in_idx] += val * s
-    
-#     return result
-
-
-# def sparse_tensor_sketch_vec(
-#     values: torch.Tensor,
-#     indices: torch.Tensor,
-#     h: List[torch.Tensor],
-#     s: List[torch.Tensor],
-#     sketch_dim: int
-# ) -> torch.Tensor:
+#     Returns
+#     -------
+#     sketch : torch.Tensor
+#         Tensor sketch of A (J x prod(I_other))
 #     """
-#     Computes the TensorSketch of a sparse tensor's vectorization.
+#     # Count sketch along each mode
+#     sketches = []
+#     for h, s in zip(h_list, s_list):
+#         sketches.append(count_sketch(A, h, J, s)) # CHANGED: A not transposed
+#     # Multiply sketches element-wise
+
+def tensor_sketch_mat(
+    M: torch.Tensor,
+    h: List[torch.Tensor],
+    s: List[torch.Tensor],
+    sketch_dim: int,
+    outer_dim_start: Optional[int] = None,
+    outer_dim_end: Optional[int] = None
+) -> torch.Tensor:
+    """
+    Further optimized version using scatter_add for better performance.
+    """
+    no_rows, no_cols = M.shape
+    device = M.device
     
-#     Args:
-#         values: Non-zero values of the sparse tensor (1D tensor)
-#         indices: Multi-dimensional indices of non-zero entries (2D tensor, shape [dims, nnz])
-#         h: List of hash functions (int tensors), one per dimension
-#         s: List of sign functions (float tensors), one per dimension
-#         sketch_dim: Target sketch dimension
+    # Handle partial sketching
+    if outer_dim_start is not None and outer_dim_end is not None:
+        partial_flag = True
+        outer_dim_start = outer_dim_start - 1
+        outer_dim_end = outer_dim_end - 1
+    else:
+        partial_flag = False
+    
+    # Generate all index combinations
+    dim_sizes = [len(h_dim) for h_dim in h]
+    if partial_flag:
+        dim_sizes[-1] = outer_dim_end - outer_dim_start + 1
+    
+    # Create linear indices
+    linear_indices = torch.arange(np.prod(dim_sizes), device=device)
+    multi_indices = [torch.div(linear_indices, np.prod(dim_sizes[i+1:]), rounding_mode='trunc').int() % dim_sizes[i] 
+                    for i in range(len(dim_sizes))]
+    
+    if partial_flag:
+        multi_indices[-1] += outer_dim_start
+    
+    # Compute hash and sign
+    combined_hash = sum(h_dim[idx] for h_dim, idx in zip(h, multi_indices))
+    combined_sign = torch.prod(torch.stack([s_dim[idx] for s_dim, idx in zip(s, multi_indices)]), dim=0)
+    
+    # Compute target rows and column indices
+    target_rows = (combined_hash - len(h)) % sketch_dim
+    col_indices = torch.arange(no_cols, device=device).view(dim_sizes).flatten()
+    
+    # Scatter-add using index_add
+    output_matrix = torch.zeros((no_rows, sketch_dim), dtype=M.dtype, device=device)
+    for row in range(no_rows):
+        output_matrix[row].index_add_(0, target_rows, M[row, col_indices] * combined_sign)
+    
+    return output_matrix
+
+def tensor_sketch_vec(
+    vec: torch.Tensor,
+    h: List[torch.Tensor],
+    s: List[torch.Tensor],
+    sketch_dim: int,
+    outer_dim_start: Optional[int] = None,
+    outer_dim_end: Optional[int] = None
+) -> torch.Tensor:
+    """
+    Vectorized TensorSketch implementation for PyTorch.
+    
+    Args:
+        vec: Input vector of shape (prod(dim_sizes),)
+        h: List of hash function tensors, each of shape (dim_size,)
+        s: List of sign function tensors, each of shape (dim_size,)
+        sketch_dim: Target sketch dimension size
+        outer_dim_start: Optional starting index for partial sketching (1-based)
+        outer_dim_end: Optional ending index for partial sketching (1-based)
         
-#     Returns:
-#         Sketch vector of shape [sketch_dim]
-#     """
-#     # Validate inputs
-#     assert len(values) == indices.shape[1], "Values and indices must match"
-#     assert len(h) == len(s) == indices.shape[0], "Need one hash/sign function per dimension"
+    Returns:
+        Sketch vector of shape (sketch_dim,)
+    """
+    device = vec.device
+    dim_sizes = [h_dim.size(0) for h_dim in h]
+    # total_elements = reduce(int.__mul__, dim_sizes)
     
-#     # Initialize output sketch vector
-#     output_vec = torch.zeros(sketch_dim, dtype=values.dtype, device=values.device)
+    # Handle partial sketching
+    if outer_dim_start is not None and outer_dim_end is not None:
+        partial_flag = True
+        outer_dim_start = outer_dim_start - 1  # Convert to 0-based
+        outer_dim_end = outer_dim_end - 1
+        dim_sizes[-1] = outer_dim_end - outer_dim_start + 1
+    else:
+        partial_flag = False
     
-#     # Precompute hash and sign contributions
-#     hash_contributions = []
-#     sign_contributions = []
+    # Create multi-dimensional indices
+    indices = torch.meshgrid(*[torch.arange(size, device=device) for size in dim_sizes], indexing='ij')
     
-#     for dim in range(indices.shape[0]):
-#         # Get indices for current dimension
-#         dim_indices = indices[dim, :] - 1  # Convert to 0-based indexing
+    # Apply partial sketching offset if needed
+    if partial_flag:
+        indices[-1] = indices[-1] + outer_dim_start
+    
+    # Compute combined hash and sign
+    combined_hash = sum(h_dim[idx] for h_dim, idx in zip(h, indices))
+    combined_sign = torch.prod(torch.stack([s_dim[idx] for s_dim, idx in zip(s, indices)]), dim=0)
+    
+    # Compute target indices in sketch
+    target_indices = (combined_hash - len(h)) % sketch_dim
+    
+    # Reshape input vector for partial sketching
+    if partial_flag:
+        # Calculate original flat indices
+        strides = [1]
+        for size in reversed(dim_sizes[1:]):
+            strides.insert(0, strides[0] * size)
+        strides = torch.tensor(strides, device=device)
         
-#         # Gather hash and sign values
-#         hash_vals = h[dim][dim_indices.long()]
-#         sign_vals = s[dim][dim_indices.long()]
-        
-#         hash_contributions.append(hash_vals)
-#         sign_contributions.append(sign_vals)
+        # Compute original indices
+        original_indices = sum(idx * stride for idx, stride in zip(indices, strides))
+        vec_values = vec[original_indices.flatten()]
+    else:
+        vec_values = vec.reshape(-1)
     
-#     # Compute combined hash and sign
-#     combined_hash = torch.stack(hash_contributions).sum(dim=0)
-#     combined_sign = torch.stack(sign_contributions).prod(dim=0)
+    # Initialize sketch vector
+    sketch = torch.zeros(sketch_dim, dtype=vec.dtype, device=device)
     
-#     # Compute target rows in sketch
-#     target_rows = (combined_hash - len(h)) % sketch_dim
+    # Vectorized scatter-add
+    sketch.index_add_(0, target_indices.flatten(), vec_values * combined_sign.flatten())
     
-#     # Scatter-add the values
-#     output_vec.index_add_(0, target_rows, values * combined_sign)
-    
-#     return output_vec
-
-
-# def sparse_to_sparse_tensor_sketch_mat(values, indices, h_list, s_list, J, In, n):
-#     """Alternative sparse tensor sketch that returns sparse result."""
-#     # Placeholder implementation
-#     warnings.warn("Using slow Python implementation for sparse tensor sketch")
-    
-#     # This would return (indices, values) for sparse matrix
-#     # Actual implementation would need to be optimized
-#     pass
-
-# def sparse_tensor_sketch_vec(values, indices, h_list, s_list, J):
-#     """Tensor sketch of sparse tensor as vector."""
-#     # Placeholder implementation
-#     warnings.warn("Using slow Python implementation for sparse tensor sketch")
-    
-#     # Compute combined hash and sign functions
-#     h_combined = torch.zeros(indices.shape[1], dtype=torch.int64, device=values.device)
-#     s_combined = torch.ones(indices.shape[1], device=values.device)
-    
-#     for i in range(len(h_list)):
-#         h_combined = (h_combined + h_list[i][indices[i]]) % J
-#         s_combined *= s_list[i][indices[i]]
-    
-#     # Apply count sketch
-#     result = torch.zeros(J, device=values.device)
-#     for h, s, val in zip(h_combined, s_combined, values):
-#         result[h] += val * s
-    
-#     return result
-
+    return sketch
 
 if __name__ == '__main__':
     T = torch.randn(100, 100, 100, 100)
