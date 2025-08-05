@@ -1,4 +1,3 @@
-from sklearn.random_projection import johnson_lindenstrauss_min_dim
 import torch
 from torch.ao.quantization.utils import _normalize_kwargs
 from functools import wraps, reduce, partial
@@ -45,7 +44,10 @@ class Decomposer(ABC):
     
     def _get_stable_rank(self, W):
         n_samples = max(W.shape)
-        min_num_samples = johnson_lindenstrauss_min_dim(n_samples, eps=self.distortion_factors).tolist()
+        eps = self.distortion_factor
+        if eps <= 0 or eps >= 1:
+            raise ValueError("distortion_factor must be in (0, 1)")
+        min_num_samples = torch.ceil(4 * torch.log(n_samples) / (eps**2 / 2 - eps**3 / 3))
         return min((round(max(min_num_samples)), *W.size(), 1))
     
     def get_approximation_error(self, W, *result_matrices):
@@ -68,7 +70,7 @@ def _need_t(f):
     return _wrapper
 
 def _ortho_gen(x: int, y: int):
-    P = torch.empty(x, y)
+    P = torch.empty((x, y))
     torch.nn.init.orthogonal_(P)
     return P
 
@@ -93,7 +95,7 @@ def _sparse_iid_entries(d, k, s=3):
     
     http://www.yaroslavvb.com/papers/achlioptas-database.pdf
     """
-    R = np.random.randint(0, 2*s, size=(d, k))  
+    R = torch.randint(0, 2*s, size=(d, k))  
     R = (R == 0).astype(int) - (R == 1).astype(int)  
     return R * torch.sqrt(s)  
 
@@ -233,25 +235,32 @@ class TwoSidedRandomSVD(Decomposer):
         'identity_copies': _identity_copies_projection
     }
 
-    
     def __init__(self, *, distortion_factor: float = 0.6, 
                  random_init: str = 'normal'):
         assert 0 < distortion_factor <= 1, 'distortion_factor must be in (0, 1]'
-        self.distortion_factors = distortion_factor
+        self.distortion_factor = distortion_factor  # Store as class attribute
         self.random_init = random_init
     
     @_need_t
-    def _decompose_big(self, X: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        return self._two_sided_decompose(X, epsilon=self.distortion_factors)
+    def _decompose_big(self, X: torch.Tensor, rank: Optional[int] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if rank is None:
+            rank = self._calculate_rank_from_epsilon(X)
+        return self._two_sided_decompose(X, rank=rank)
         
     @_need_t
-    def _decompose(self, X: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        return self._two_sided_decompose(X, epsilon=self.distortion_factors)
+    def _decompose(self, X: torch.Tensor, rank: Optional[int] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if rank is None:
+            rank = self._calculate_rank_from_epsilon(X)
+        return self._two_sided_decompose(X, rank=rank)
+    
+    def _calculate_rank_from_epsilon(self, tensor: torch.Tensor) -> int:
+        svals = torch.linalg.svdvals(tensor)
+        stable_rank = (svals.sum() / svals.max())**2
+        # Use class attribute instead of parameter
+        return max(1, min(tensor.size(-1), int(stable_rank * (1 / self.distortion_factor))))
     
     @_need_t
-    def _two_sided_decompose(self, X, rank=None, random_state=None):
-        
-
+    def _two_sided_decompose(self, X: torch.Tensor, rank: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         I, J = X.shape[-2], X.shape[-1]
         random_gen = self._random_gens[self.random_init]
         Omega1 = random_gen(J, rank).to(X.device, X.dtype)
@@ -271,17 +280,8 @@ class TwoSidedRandomSVD(Decomposer):
             
         return U, S, Vh
     
-    def _two_sided_compose(self, U, S, Vh):
-        composition = (U * S.unsqueeze(0)) @ Vh
-        return composition
-    
-    def _calculate_rank_from_epsilon(self, tensor: torch.Tensor, epsilon: Optional[float]) -> int:
-        if epsilon is None:
-            return self._get_stable_rank(tensor)
-        
-        svals = torch.linalg.svdvals(tensor)
-        stable_rank = (svals.sum() / svals.max())**2
-        return max(1, min(tensor.size(-1), int(stable_rank * (1 / epsilon))))
+    def _two_sided_compose(self, U: torch.Tensor, S: torch.Tensor, Vh: torch.Tensor) -> torch.Tensor:
+        return (U * S.unsqueeze(0)) @ Vh
     
     def get_approximation_error(self, W: torch.Tensor, *result_matrices: torch.Tensor) -> torch.Tensor:
         U, S, Vh = result_matrices
