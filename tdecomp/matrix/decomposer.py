@@ -96,8 +96,8 @@ def _sparse_iid_entries(d, k, s=3):
     http://www.yaroslavvb.com/papers/achlioptas-database.pdf
     """
     R = torch.randint(0, 2*s, size=(d, k))  
-    R = (R == 0).astype(int) - (R == 1).astype(int)  
-    return R * torch.sqrt(s)  
+    R = (R == 0).to(torch.int) - (R == 1).to(torch.int) 
+    return R * torch.sqrt(torch.tensor(s, dtype=torch.float32))  
 
 
 def _sparse_jl_matrix(d, k, s=3):
@@ -167,24 +167,30 @@ def _lean_walsh_transform(
         device (str): Устройство для вычислений ("cpu" или "cuda")
         dtype (torch.dtype): Тип данных тензора
     """
+    if not (k > 0 and (k & (k - 1) == 0)):
+        raise ValueError("k must be a power of 2")
+
     diag_elements = torch.randint(0, 2, (d,), device=device, dtype=dtype) * 2 - 1
     D = torch.diag(diag_elements)
 
     eye_k = torch.eye(k, device=device, dtype=dtype)
-    n = k
     h = eye_k.clone()
     
-    for i in range(int(torch.log2(n))):
+    num_iterations = int(torch.log2(torch.tensor(k, dtype=torch.float32)))
+    
+    for i in range(num_iterations):
         s = 2 ** i
-        m = n // s
+        m = k // s
         h = h.view(-1, m, s)
         half = s // 2
+        if half == 0:
+            break
         even = h[..., :half]
         odd = h[..., half:]
         h[..., :half] = even + odd
         h[..., half:] = even - odd
     
-    H = h.view_as(eye_k) * (1.0 / torch.sqrt(n))
+    H = h.view_as(eye_k) * (1.0 / torch.sqrt(torch.tensor(k, dtype=torch.float32)))
 
     if d <= k:
         H = H[:d, :]
@@ -210,13 +216,19 @@ def _identity_copies_projection(
         dtype (torch.dtype): Тип данных тензора
     """
     copies = k // d
+    remainder = k % d
     
     eye = torch.eye(d, device=device, dtype=dtype)
-    R = torch.cat([eye] * copies, dim=1)
+    R_parts = [eye] * copies
+    
+    if remainder > 0:
+        R_parts.append(eye[:, :remainder])
+    
+    R = torch.cat(R_parts, dim=1)
 
     perm = torch.randperm(k, device=device)
     R = R[:, perm]
-    R *= torch.sqrt(d / k)
+    R *= torch.sqrt(torch.tensor(d / k, dtype=torch.float32))
     
     return R
 
