@@ -234,6 +234,7 @@ def _identity_copies_projection(
 
 class TwoSidedRandomSVD(Decomposer):
     """
+    Randomized Two-Sided SVD with explicit rank parameter support
     https://scispace.com/pdf/randomized-algorithms-for-computation-of-tucker-1stsnpusvv.pdf
     """
     _random_gens = {
@@ -248,19 +249,30 @@ class TwoSidedRandomSVD(Decomposer):
     }
 
     def __init__(self, *, distortion_factor: float = 0.6, 
-                 random_init: str = 'normal'):
+                 random_init: str = 'normal', rank: int):
         assert 0 < distortion_factor <= 1, 'distortion_factor must be in (0, 1]'
-        self.distortion_factor = distortion_factor  # Store as class attribute
+        self.distortion_factor = distortion_factor
         self.random_init = random_init
+        if random_init == 'lean_walsh' and rank is not None:
+            if not (rank > 0 and (rank & (rank - 1) == 0)):
+                raise ValueError(f"For lean_walsh, rank must be power of 2, got {rank}")
+        
+        self.rank = rank
+    
+    def decompose(self, W: torch.Tensor, rank: Optional[int] = None, *args, **kwargs):
+        if not self._is_big(W):
+            return self._decompose(W, rank=rank, *args, **kwargs)
+        else:
+            return self._decompose_big(W, rank=rank, *args, **kwargs)
     
     @_need_t
-    def _decompose_big(self, X: torch.Tensor, rank: Optional[int] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _decompose_big(self, X: torch.Tensor, rank: Optional[int] = None, **kwargs) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if rank is None:
             rank = self._calculate_rank_from_epsilon(X)
         return self._two_sided_decompose(X, rank=rank)
         
     @_need_t
-    def _decompose(self, X: torch.Tensor, rank: Optional[int] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _decompose(self, X: torch.Tensor, rank: Optional[int] = None, **kwargs) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if rank is None:
             rank = self._calculate_rank_from_epsilon(X)
         return self._two_sided_decompose(X, rank=rank)
@@ -268,7 +280,6 @@ class TwoSidedRandomSVD(Decomposer):
     def _calculate_rank_from_epsilon(self, tensor: torch.Tensor) -> int:
         svals = torch.linalg.svdvals(tensor)
         stable_rank = (svals.sum() / svals.max())**2
-        # Use class attribute instead of parameter
         return max(1, min(tensor.size(-1), int(stable_rank * (1 / self.distortion_factor))))
     
     @_need_t
