@@ -63,6 +63,7 @@ class ExperimentRunner:
             x = torch.randn(100, 100, device=self.device)
             for _ in range(10):
                 _ = torch.linalg.svd(x)
+            del x  # Освобождаем память после разогрева
             self.clear_cuda_cache()
         
     def run_method(
@@ -70,47 +71,121 @@ class ExperimentRunner:
         method: Callable,
         matrix_generator: Callable,
         method_kwargs: Dict[str, Any] = None,
-        n_repeats: int = 1
-    ) -> List[Dict]:
+        n_repeats: int = 1,
+        max_attempts: int = 3  
+    ) -> Optional[List[Dict]]:
         method_kwargs = method_kwargs or {}
         results = []
         
-        for _ in range(n_repeats):
-            self.clear_cuda_cache()
-            X = matrix_generator()
-            
-            if self.device == "cuda":
-                torch.cuda.synchronize()
-            start_time = time.perf_counter()
-            
-            if method == torch.linalg.svd:
-                U, S, Vh = method(X, full_matrices=False)
-                X_approx = U @ torch.diag(S) @ Vh
-            else:
-                decomposer = method(**method_kwargs)
-                U, S, Vh = decomposer.decompose(X)
-                X_approx = decomposer._two_sided_compose(U, S, Vh)
-            
-            if self.device == "cuda":
-                torch.cuda.synchronize()
-            elapsed = time.perf_counter() - start_time
-            
-            error = torch.norm(X - X_approx).item()
-            rel_error = error / torch.norm(X).item()
-            rank = len(S)
-            
-            results.append({
-                "shape": tuple(X.shape),
-                "error": error,
-                "relative_error": rel_error,
-                "time": elapsed,
-                "rank": rank
-            })
+        for attempt in range(max_attempts):
+            try:
+                for _ in range(n_repeats):
+                    self.clear_cuda_cache()
+                    try:
+                        # Генерация матрицы
+                        X = matrix_generator()
+                        
+                        if self.device == "cuda":
+                            torch.cuda.empty_cache()
+                            total_mem = torch.cuda.get_device_properties(0).total_memory / 1024**3
+                            allocated = torch.cuda.memory_allocated() / 1024**3
+                            logger.debug(f"Attempt {attempt+1}: GPU memory - Total: {total_mem:.1f}GB, Used: {allocated:.1f}GB")
+                        
+                        # Проверка доступной памяти перед запуском SVD
+                        if method == torch.linalg.svd and self.device == "cuda":
+                            m, n = X.shape
+                            required_mem = (m*n + m*m + n*n + min(m,n)) * 4 / 1024**3
+                            free_mem = total_mem - allocated
+                            
+                            if required_mem > free_mem * 0.9:
+                                logger.warning(f"Not enough memory for SVD. Required: {required_mem:.2f}GB, Available: {free_mem:.2f}GB")
+                                del X
+                                self.clear_cuda_cache()
+                                raise MemoryError("Not enough memory for SVD")
+                        
+                        if self.device == "cuda":
+                            torch.cuda.synchronize()
+                        start_time = time.perf_counter()
+                        
+                        if method == torch.linalg.svd:
+                            try:
+                                with torch.cuda.amp.autocast(enabled=False):  
+                                    U, S, Vh = method(X, full_matrices=False)
+                                X_approx = U @ torch.diag(S) @ Vh
+                                
+                                del U, Vh
+                            except RuntimeError as e:
+                                if 'out of memory' in str(e).lower():
+                                    logger.warning(f"OOM in SVD for {X.shape}, attempt {attempt+1}")
+                                    if 'X_approx' in locals(): 
+                                        del X_approx
+                                        self.clear_cuda_cache()
+                                    if 'S' in locals(): 
+                                        del S
+                                    del X
+                                    self.clear_cuda_cache()
+                                    raise MemoryError(f"OOM in SVD: {str(e)}") from e
+                                raise  # Пробрасываем оригинальную ошибку, если это не OOM
+                        else:
+                            try:
+                                decomposer = method(**method_kwargs)
+                                U, S, Vh = decomposer.decompose(X)
+                                X_approx = decomposer._two_sided_compose(U, S, Vh)
+                                
+                                del decomposer, U, Vh
+                            except RuntimeError as e:
+                                if 'out of memory' in str(e).lower():
+                                    logger.warning(f"OOM in {method.__name__} for {X.shape}, attempt {attempt+1}")
+                                    if 'X_approx' in locals(): 
+                                        del X_approx
+                                        self.clear_cuda_cache()
+                                    if 'S' in locals(): 
+                                        del S
+                                    if 'decomposer' in locals(): 
+                                        del decomposer
+                                    del X
+                                    self.clear_cuda_cache()
+                                    raise MemoryError(f"OOM in {method.__name__}: {str(e)}") from e
+                                raise  # Пробрасываем оригинальную ошибку
+                        
+                        if self.device == "cuda":
+                            torch.cuda.synchronize()
+                        elapsed = time.perf_counter() - start_time
+                        
+                        error = torch.norm(X - X_approx).item()
+                        rel_error = error / torch.norm(X).item()
+                        rank = len(S)
+                        
+                        results.append({
+                            "shape": tuple(X.shape),
+                            "error": error,
+                            "relative_error": rel_error,
+                            "time": elapsed,
+                            "rank": rank
+                        })
+                        
+                        del X, X_approx, S
+                        self.clear_cuda_cache()
+                    
+                    except MemoryError as e:
+                        self.clear_cuda_cache()
+                        logger.error(f"Memory error in run_method: {str(e)}")
+                        raise  # Пробрасываем MemoryError дальше
+                    
+                return results  
+                
+            except Exception as e:
+                logger.error(f"Attempt {attempt+1} failed: {str(e)}")
+                self.clear_cuda_cache()
+                if attempt == max_attempts - 1:
+                    logger.error(f"All {max_attempts} attempts failed for method {method.__name__}")
+                    raise  # Пробрасываем исключение после всех попыток
+                continue
         
-        return results
+        return None
     
     def aggregate_results(self, results: List[Dict]) -> Dict:
-        return {
+        aggregated = {
             "shape": results[0]["shape"],
             "error_mean": np.mean([r["error"] for r in results]),
             "error_std": np.std([r["error"] for r in results]),
@@ -120,23 +195,26 @@ class ExperimentRunner:
             "rank_std": np.std([r["rank"] for r in results]),
             "raw_results": results
         }
+        del results  # Освобождаем память после агрегации
+        return aggregated
     
     def generate_matrix(self, shape: Tuple[int, int], rank: Optional[int] = None) -> Callable:
         """Генератор матриц с возможностью задания ранга"""
         def generator():
             if rank is None or rank >= min(shape):  
-                return torch.randn(*shape, device=self.device, dtype=torch.float32)
+                matrix = torch.randn(*shape, device=self.device, dtype=torch.float32)
             else:  
                 A = torch.randn(shape[0], rank, device=self.device, dtype=torch.float32)
                 B = torch.randn(rank, shape[1], device=self.device, dtype=torch.float32)
-                return A @ B
+                matrix = A @ B
+                del A, B  # Освобождаем промежуточные матрицы
+            return matrix
         return generator
     
     def run_comparative_experiment(self):
         self.warmup()
         all_results = {}
         baseline_results = []
-        
         
         def adjust_rank(method: str, rank: Optional[int], size: int) -> Optional[int]:
             if rank is None:
@@ -145,13 +223,10 @@ class ExperimentRunner:
             if method == 'lean_walsh':
                 if rank <= 1:
                     return 1
-                # Находим ближайшую степень двойки (округляем вниз)
                 adjusted_rank = 1 << (rank - 1).bit_length()
-                # Если мы получили следующую степень (например, для 5 получаем 8),
-                # то берем предыдущую (для 5 должно быть 4)
+                
                 if adjusted_rank > rank:
                     adjusted_rank = adjusted_rank >> 1
-                # Убедимся, что не превышаем размер матрицы
                 return min(max(adjusted_rank, 1), size)
             
             return rank
@@ -162,107 +237,90 @@ class ExperimentRunner:
             ('fixed_rank', lambda s: 32) 
         ]
         
-        for size in SQUARE_SIZES:
+        def process_experiment(size, is_rectangular=False):
             for method in RANDOM_INIT_METHODS:
                 for rank_name, rank_fn in rank_strategies:
-                    current_rank = rank_fn(size) if rank_fn else None
-                    adjusted_rank = adjust_rank(method, current_rank, size)
+                    shape = (RECTANGULAR_FIXED_DIM, size) if is_rectangular else (size, size)
+                    current_rank = rank_fn(min(shape)) if rank_fn else None
+                    adjusted_rank = adjust_rank(method, current_rank, min(shape))
+                    
                     if method == 'lean_walsh' and adjusted_rank is not None:
                         if not (adjusted_rank > 0 and (adjusted_rank & (adjusted_rank - 1) == 0)):
                             logger.error(f"Invalid rank for lean_walsh: {adjusted_rank}")
-                            continue  # Пропускаем эту итерацию
-                    key = f"{method}_{rank_name}"
+                            continue
                     
-                    logger.info(f"Processing {rank_name} {size}x{size} with {method} (rank={adjusted_rank})")
-                    matrix_gen = self.generate_matrix((size, size), rank=adjusted_rank)
+                    key = f"{'rect_' if is_rectangular else ''}{method}_{rank_name}"
+                    logger.info(f"Processing {key} {shape[0]}x{shape[1]} (rank={adjusted_rank})")
                     
-                    if method == RANDOM_INIT_METHODS[0]:
-                        logger.info(f"Running baseline SVD for {size}x{size} ({rank_name})")
-                        baseline = self.run_method(
-                            torch.linalg.svd,
+                    try:
+                        matrix_gen = self.generate_matrix(shape, rank=adjusted_rank)
+                        
+                        if method == RANDOM_INIT_METHODS[0]:
+                            logger.info(f"Running baseline SVD for {shape[0]}x{shape[1]} ({rank_name})")
+                            baseline = self.run_method(
+                                torch.linalg.svd,
+                                matrix_gen,
+                                n_repeats=N_REPEATS
+                            )
+                            if baseline is not None:
+                                baseline_results.append({
+                                    **self.aggregate_results(baseline),
+                                    "rank_strategy": rank_name,
+                                    "method": "svd_baseline",
+                                    "matrix_shape": f"{shape[0]}x{shape[1]}"
+                                })
+                                del baseline  
+                        
+                        results = self.run_method(
+                            TwoSidedRandomSVD,
                             matrix_gen,
+                            method_kwargs={
+                                "random_init": method,
+                                "rank": adjusted_rank  
+                            },
                             n_repeats=N_REPEATS
                         )
-                        baseline_results.append({
-                            **self.aggregate_results(baseline),
-                            "rank_strategy": rank_name,
-                            "method": "svd_baseline",
-                            "matrix_shape": f"{size}x{size}"
-                        })
+                        
+                        if results is not None:
+                            if key not in all_results:
+                                all_results[key] = []
+                            
+                            aggregated = self.aggregate_results(results)
+                            all_results[key].append({
+                                **aggregated,
+                                "rank_strategy": rank_name,
+                                "method": method,
+                                "matrix_shape": f"{shape[0]}x{shape[1]}",
+                                "actual_rank": adjusted_rank if adjusted_rank is not None else min(shape)
+                            })
+                            del results, aggregated 
                     
-                    results = self.run_method(
-                        TwoSidedRandomSVD,
-                        matrix_gen,
-                        method_kwargs={
-                            "random_init": method,
-                            "rank": adjusted_rank  
-                        },
-                        n_repeats=N_REPEATS
-                    )
-                    
-                    if key not in all_results:
-                        all_results[key] = []
-                    
-                    all_results[key].append({
-                        **self.aggregate_results(results),
-                        "rank_strategy": rank_name,
-                        "method": method,
-                        "matrix_shape": f"{size}x{size}",
-                        "actual_rank": adjusted_rank if adjusted_rank is not None else size
-                    })
+                    except Exception as e:
+                        logger.error(f"Error processing {shape[0]}x{shape[1]} with {method}: {str(e)}")
+                        self.clear_cuda_cache()
+                        continue
                     
                     self.clear_cuda_cache()
         
-        for size in RECTANGULAR_VARIABLE_SIZES:
-            for method in RANDOM_INIT_METHODS:
-                for rank_name, rank_fn in rank_strategies:
-                    current_rank = rank_fn(min(RECTANGULAR_FIXED_DIM, size)) if rank_fn else None
-                    adjusted_rank = adjust_rank(method, current_rank, min(RECTANGULAR_FIXED_DIM, size))
-                    key = f"rect_{method}_{rank_name}"
-                    
-                    logger.info(f"Processing rectangular {RECTANGULAR_FIXED_DIM}x{size} with {method} (rank={adjusted_rank})")
-                    matrix_gen = self.generate_matrix((RECTANGULAR_FIXED_DIM, size), rank=adjusted_rank)
-                    
-                    if method == RANDOM_INIT_METHODS[0]:
-                        logger.info(f"Running baseline SVD for {RECTANGULAR_FIXED_DIM}x{size} ({rank_name})")
-                        baseline = self.run_method(
-                            torch.linalg.svd,
-                            matrix_gen,
-                            n_repeats=N_REPEATS
-                        )
-                        baseline_results.append({
-                            **self.aggregate_results(baseline),
-                            "rank_strategy": rank_name,
-                            "method": "svd_baseline",
-                            "matrix_shape": f"{RECTANGULAR_FIXED_DIM}x{size}"
-                        })
-                    
-                    results = self.run_method(
-                        TwoSidedRandomSVD,
-                        matrix_gen,
-                        method_kwargs={
-                            "random_init": method,
-                            "rank": adjusted_rank
-                        },
-                        n_repeats=N_REPEATS
-                    )
-                    
-                    if key not in all_results:
-                        all_results[key] = []
-                    
-                    all_results[key].append({
-                        **self.aggregate_results(results),
-                        "rank_strategy": rank_name,
-                        "method": method,
-                        "matrix_shape": f"{RECTANGULAR_FIXED_DIM}x{size}",
-                        "actual_rank": adjusted_rank if adjusted_rank is not None else min(RECTANGULAR_FIXED_DIM, size)
-                    })
-                    
-                    self.clear_cuda_cache()
+        try:
+            for size in SQUARE_SIZES:
+                process_experiment(size)
+            
+            for size in RECTANGULAR_VARIABLE_SIZES:
+                process_experiment(size, is_rectangular=True)
+            
+            self.plot_results(all_results, baseline_results)
+            self.save_results(all_results, baseline_results)
+            return all_results, baseline_results
         
-        self.plot_results(all_results, baseline_results)
-        self.save_results(all_results, baseline_results)
-        return all_results, baseline_results
+        except Exception as e:
+            logger.critical(f"Critical error in run_comparative_experiment: {str(e)}")
+            self.clear_cuda_cache()
+            raise 
+            
+        finally:
+            self.clear_cuda_cache()
+            torch.cuda.empty_cache()
     
     def plot_results(self, method_results: Dict, baseline_results: List[Dict]):
         plt.figure(figsize=(18, 12))
@@ -272,13 +330,13 @@ class ExperimentRunner:
             plt.title(f'Square matrices ({rank_name})')
             
             base_sizes = [int(d["matrix_shape"].split('x')[0]) 
-                         for d in baseline_results 
-                         if d["rank_strategy"] == rank_name and 'x' in d["matrix_shape"] and 
-                         d["matrix_shape"].split('x')[0] == d["matrix_shape"].split('x')[1]]
+                        for d in baseline_results 
+                        if d["rank_strategy"] == rank_name and 'x' in d["matrix_shape"] and 
+                        d["matrix_shape"].split('x')[0] == d["matrix_shape"].split('x')[1]]
             base_errors = [d["error_mean"] 
-                          for d in baseline_results 
-                          if d["rank_strategy"] == rank_name and 'x' in d["matrix_shape"] and 
-                          d["matrix_shape"].split('x')[0] == d["matrix_shape"].split('x')[1]]
+                        for d in baseline_results 
+                        if d["rank_strategy"] == rank_name and 'x' in d["matrix_shape"] and 
+                        d["matrix_shape"].split('x')[0] == d["matrix_shape"].split('x')[1]]
             plt.plot(base_sizes, base_errors, 'k--', label='SVD Baseline')
             
             for method in RANDOM_INIT_METHODS:
@@ -301,13 +359,13 @@ class ExperimentRunner:
             plt.title(f'Rectangular matrices ({rank_name})')
             
             base_sizes = [d["matrix_shape"] 
-                         for d in baseline_results 
-                         if d["rank_strategy"] == rank_name and 'x' in d["matrix_shape"] and 
-                         d["matrix_shape"].split('x')[0] != d["matrix_shape"].split('x')[1]]
+                        for d in baseline_results 
+                        if d["rank_strategy"] == rank_name and 'x' in d["matrix_shape"] and 
+                        d["matrix_shape"].split('x')[0] != d["matrix_shape"].split('x')[1]]
             base_errors = [d["error_mean"] 
-                          for d in baseline_results 
-                          if d["rank_strategy"] == rank_name and 'x' in d["matrix_shape"] and 
-                          d["matrix_shape"].split('x')[0] != d["matrix_shape"].split('x')[1]]
+                        for d in baseline_results 
+                        if d["rank_strategy"] == rank_name and 'x' in d["matrix_shape"] and 
+                        d["matrix_shape"].split('x')[0] != d["matrix_shape"].split('x')[1]]
             plt.plot(range(len(base_sizes)), base_errors, 'k--', label='SVD Baseline')
             plt.xticks(range(len(base_sizes)), base_sizes, rotation=45)
             
@@ -329,10 +387,78 @@ class ExperimentRunner:
         plt.tight_layout()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         os.makedirs("visualizations", exist_ok=True)
-        plt.savefig(f"visualizations/comparison_results_{timestamp}.png")
+        error_plot_path = f"visualizations/comparison_results_{timestamp}.png"
+        plt.savefig(error_plot_path)
         plt.close()
-        logger.info(f"Saved visualization to visualizations/comparison_results_{timestamp}.png")
-    
+        logger.info(f"Saved error visualization to {error_plot_path}")
+        
+        plt.figure(figsize=(18, 12))
+        
+        for i, rank_name in enumerate(['full_rank', 'half_rank', 'fixed_rank']):
+            plt.subplot(2, 3, i+1)
+            plt.title(f'Square matrices ({rank_name}) - Time')
+            
+            base_sizes = [int(d["matrix_shape"].split('x')[0]) 
+                        for d in baseline_results 
+                        if d["rank_strategy"] == rank_name and 'x' in d["matrix_shape"] and 
+                        d["matrix_shape"].split('x')[0] == d["matrix_shape"].split('x')[1]]
+            base_times = [d["time_mean"] 
+                        for d in baseline_results 
+                        if d["rank_strategy"] == rank_name and 'x' in d["matrix_shape"] and 
+                        d["matrix_shape"].split('x')[0] == d["matrix_shape"].split('x')[1]]
+            plt.plot(base_sizes, base_times, 'k--', label='SVD Baseline')
+            
+            for method in RANDOM_INIT_METHODS:
+                key = f"{method}_{rank_name}"
+                if key in method_results:
+                    data = method_results[key]
+                    sizes = [int(d["matrix_shape"].split('x')[0]) for d in data]
+                    times = [d["time_mean"] for d in data]
+                    plt.plot(sizes, times, 'o-', label=method)
+            
+            plt.xlabel('Matrix Size')
+            plt.ylabel('Time (s)')
+            plt.legend()
+            plt.grid(True)
+            plt.xscale('log')
+            plt.yscale('log')
+        
+        for i, rank_name in enumerate(['full_rank', 'half_rank', 'fixed_rank']):
+            plt.subplot(2, 3, i+4)
+            plt.title(f'Rectangular matrices ({rank_name}) - Time')
+            
+            base_sizes = [d["matrix_shape"] 
+                        for d in baseline_results 
+                        if d["rank_strategy"] == rank_name and 'x' in d["matrix_shape"] and 
+                        d["matrix_shape"].split('x')[0] != d["matrix_shape"].split('x')[1]]
+            base_times = [d["time_mean"] 
+                        for d in baseline_results 
+                        if d["rank_strategy"] == rank_name and 'x' in d["matrix_shape"] and 
+                        d["matrix_shape"].split('x')[0] != d["matrix_shape"].split('x')[1]]
+            plt.plot(range(len(base_sizes)), base_times, 'k--', label='SVD Baseline')
+            plt.xticks(range(len(base_sizes)), base_sizes, rotation=45)
+            
+            for method in RANDOM_INIT_METHODS:
+                key = f"rect_{method}_{rank_name}"
+                if key in method_results:
+                    data = method_results[key]
+                    sizes = [d["matrix_shape"] for d in data]
+                    times = [d["time_mean"] for d in data]
+                    plt.plot(range(len(sizes)), times, 'o-', label=method)
+                    plt.xticks(range(len(sizes)), sizes, rotation=45)
+            
+            plt.xlabel('Matrix Size')
+            plt.ylabel('Time (s)')
+            plt.legend()
+            plt.grid(True)
+            plt.yscale('log')
+        
+        plt.tight_layout()
+        time_plot_path = f"visualizations/time_comparison_{timestamp}.png"
+        plt.savefig(time_plot_path)
+        plt.close()
+        logger.info(f"Saved time visualization to {time_plot_path}")
+
     def save_results(self, method_results: Dict, baseline_results: List[Dict]):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         os.makedirs("results", exist_ok=True)
