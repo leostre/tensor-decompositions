@@ -1,8 +1,0 @@
-2025-08-06 13:10:53,891 - INFO - Running comparative experiments on cuda
-2025-08-06 13:10:53,892 - INFO - Starting experiments for normal initialization
-2025-08-06 13:11:00,066 - INFO - Starting experiments for ortho initialization
-2025-08-06 13:11:08,471 - INFO - Starting experiments for iid_entries initialization
-2025-08-06 13:11:17,199 - INFO - Starting experiments for lean_walsh initialization
-2025-08-06 13:11:24,970 - INFO - Starting experiments for identity_copies initialization
-2025-08-06 13:11:31,632 - INFO - Running baseline SVD experiments
-2025-08-06 13:11:35,368 - INFO - All comparative experiments completed
