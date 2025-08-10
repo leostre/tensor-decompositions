@@ -1,0 +1,43 @@
+2025-08-04 17:15:53,294 - INFO - Starting square matrices experiment
+2025-08-04 17:18:36,624 - INFO - Starting experiments on device: cuda
+2025-08-04 17:18:36,625 - ERROR - Failed for shape (16, 16), type random: empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:18:36,626 - WARNING - Failed experiment: size 16, type random
+2025-08-04 17:18:36,627 - ERROR - Failed for shape (32, 32), type random: empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:18:36,630 - WARNING - Failed experiment: size 32, type random
+2025-08-04 17:18:36,631 - ERROR - Failed for shape (64, 64), type random: empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:18:36,632 - WARNING - Failed experiment: size 64, type random
+2025-08-04 17:18:36,633 - ERROR - Failed for shape (128, 128), type random: empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:18:36,634 - WARNING - Failed experiment: size 128, type random
+2025-08-04 17:18:36,634 - ERROR - Failed for shape (16, 256), type random: empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:18:36,635 - ERROR - Failed for shape (256, 16), type random: empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:18:36,636 - ERROR - Failed for shape (32, 256), type random: empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:18:36,637 - ERROR - Failed for shape (256, 32), type random: empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:18:36,638 - ERROR - Failed for shape (64, 256), type random: empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:18:36,638 - ERROR - Failed for shape (256, 64), type random: empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:18:36,639 - ERROR - Failed for shape (128, 256), type random: empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:18:36,640 - ERROR - Failed for shape (256, 128), type random: empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:18:36,640 - ERROR - No successful experiments to visualize
+2025-08-04 17:18:36,644 - INFO - Completed 0/12 experiments
+2025-08-04 17:26:30,635 - INFO - Running square 16x16, type random
+2025-08-04 17:26:30,638 - WARNING - Attempt 1 failed for shape (16, 16): empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:26:31,641 - WARNING - Attempt 2 failed for shape (16, 16): empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:26:31,646 - INFO - Running square 32x32, type random
+2025-08-04 17:26:31,652 - WARNING - Attempt 1 failed for shape (32, 32): empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:26:32,656 - WARNING - Attempt 2 failed for shape (32, 32): empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:26:32,661 - INFO - Running square 64x64, type random
+2025-08-04 17:26:32,668 - WARNING - Attempt 1 failed for shape (64, 64): empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:26:33,674 - WARNING - Attempt 2 failed for shape (64, 64): empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:26:33,677 - INFO - Running square 128x128, type random
+2025-08-04 17:26:33,680 - WARNING - Attempt 1 failed for shape (128, 128): empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:26:34,684 - WARNING - Attempt 2 failed for shape (128, 128): empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:26:34,688 - INFO - Running rectangular 256x16, type random
+2025-08-04 17:26:34,694 - WARNING - Attempt 1 failed for shape (256, 16): empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:26:35,699 - WARNING - Attempt 2 failed for shape (256, 16): empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:26:35,703 - INFO - Running rectangular 256x32, type random
+2025-08-04 17:26:35,709 - WARNING - Attempt 1 failed for shape (256, 32): empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:26:36,713 - WARNING - Attempt 2 failed for shape (256, 32): empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:26:36,714 - INFO - Running rectangular 256x128, type random
+2025-08-04 17:26:36,717 - WARNING - Attempt 1 failed for shape (256, 128): empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:26:37,719 - WARNING - Attempt 2 failed for shape (256, 128): empty(): argument 'size' failed to unpack the object at pos 2 with error "type must be tuple of ints,but got NoneType"
+2025-08-04 17:26:37,724 - INFO - Experiment completed. Success rate: 0.0%
+2025-08-04 17:26:37,726 - ERROR - No successful experiments to save or visualize
