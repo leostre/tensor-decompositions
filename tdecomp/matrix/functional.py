@@ -1,7 +1,7 @@
 import sys
 
 from tdecomp.matrix.decomposer import *
-from torch.ao.quantization.utils import _normalize_kwargs
+from torch.ao.quantization.utils import _normalize_kwargs # noqa
 
 __functionals = {
     'rsvd': RandomizedSVD,
@@ -16,7 +16,6 @@ __namespace = globals()
 
 def __base_dec_gen(method_name, ):
     method = __functionals[method_name]
-    # init_kwargs_str = ', '.join([f'{v.name} = {v.default}' for v in init_kwargs.values() if v.name != 'self'])
     exec(
 f'''
 def {method_name}(matrix, n_eigenvecs,  **kwargs):
