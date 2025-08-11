@@ -1,6 +1,6 @@
 from sklearn.random_projection import johnson_lindenstrauss_min_dim
 import torch
-from functools import wraps, reduce, partial
+from functools import wraps, reduce
 from typing import *
 from abc import ABC, abstractmethod
 
@@ -41,6 +41,37 @@ def _ortho_gen(x: int, y: int):
     torch.nn.init.orthogonal_(P)
     return P
 
+def n_mode_unfolding(X, n):
+    """
+    Makes n-unfolding of tensor X by given mode n (1-indexed)
+    Optimized vectorized implementation
+
+    Args:
+        X: torch.Tensor, N-sized tensor with dimension (I_1, I_2, ..., I_N)
+        n: int, unfolding mode (1 to N)
+
+    Returns:
+        torch.Tensor: Unfolding matrix with dimension (I_n, I_1*...*I_{n-1}*I_{n+1}*...*I_N)
+    """
+    # Convert to 0-indexed
+    n = n - 1
+    
+    # Get tensor dimensions
+    dims = list(X.size())
+    N = len(dims)
+    
+    # Permute tensor to put mode n first
+    perm = list(range(N))
+    perm.remove(n)
+    perm = [n] + perm
+    
+    # Permute and reshape
+    X_permuted = X.permute(perm)
+    new_shape = [dims[n]] + [-1]
+    X_unfolded = X_permuted.reshape(new_shape)
+    
+    return X_unfolded
+
 class Decomposer(ABC):
     def decompose(self, W: torch.Tensor, *args, **kwargs):
         if not self._is_big(W):
@@ -60,8 +91,8 @@ class Decomposer(ABC):
     
     def _get_stable_rank(self, W):
         n_samples = max(W.shape)
-        min_num_samples = johnson_lindenstrauss_min_dim(n_samples, eps=self.distortion_factors).tolist()
-        return min((round(max(min_num_samples)), *W.size(), 1))
+        min_num_samples = johnson_lindenstrauss_min_dim(n_samples, eps=self.distortion_factors)
+        return min(round(min_num_samples), max(W.size()), 1)
     
     def get_approximation_error(self, W, *result_matrices):
         approx = reduce(torch.matmul, result_matrices)
@@ -107,7 +138,7 @@ class RandomizedSVD(Decomposer):
     
     @_need_t
     def _decompose_big(self, X):
-        P = torch.randn(self._get_stable_rank(X), X.size(-2))
+        P = torch.randn(self._get_stable_rank(X), X.size(-2), device=X.device, dtype=X.dtype)
         G = P @ X @ (X.T @ P.T)
         Q, _ = torch.linalg.qr(
             (torch.pow(G, self.power) @ (P @ X)).T,
@@ -119,7 +150,7 @@ class RandomizedSVD(Decomposer):
     @_need_t
     def _decompose(self, X):
         G = X @ X.T
-        P = torch.randn(X.size(1), self._get_stable_rank(X))
+        P = torch.randn(X.size(1), self._get_stable_rank(X), device=X.device, dtype=X.dtype)
         Q, _ = torch.linalg.qr(torch.pow(G, self.power) @ X @ P, mode='reduced')
         B = Q.T @ X
         U, S, Vh = torch.linalg.svd(B, full_matrices=False)
@@ -130,6 +161,102 @@ class RandomizedSVD(Decomposer):
         approx = (U * S) @ Vh
         return torch.linalg.norm(W - approx)
     
+
+class TensorDecomposer(Decomposer):
+    """
+    Base class for tensor decomposition algorithms.
+    
+    This class provides common functionality for tensor decomposition methods such as
+    Tucker decomposition variants. It includes shared methods for tensor operations
+    like mode-product multiplication, tensor reconstruction from factors, and
+    approximation error computation.
+    
+    Methods:
+        _mode_dot: Tensor product along a specified mode
+        _reconstruct_tensor: Reconstruct tensor from Tucker decomposition factors
+        get_approximation_error: Compute relative approximation error
+    """
+    
+    def _mode_dot(self, tensor, matrix, mode):
+        """
+        Tensor product along a specified mode.
+        
+        Args:
+            tensor: input tensor
+            matrix: matrix to multiply with
+            mode: mode number (0-based)
+            
+        Returns:
+            Result of tensor product
+        """
+        # Move the selected mode to the end
+        ndim = tensor.dim()
+        perm = list(range(ndim))
+        if mode != ndim - 1:
+            perm = perm[:mode] + perm[mode + 1:] + [perm[mode]]
+        tensor_permuted = tensor.permute(perm)
+
+        # Convert to 2D and multiply
+        shape_permuted = tensor_permuted.shape
+        tensor_2d = tensor_permuted.reshape(-1, shape_permuted[-1])
+        new_tensor_2d = tensor_2d @ matrix.t()
+
+        # Form new shape and restore multidimensionality
+        new_shape = shape_permuted[:-1] + (matrix.size(0),)
+        new_tensor_permuted = new_tensor_2d.reshape(new_shape)
+
+        # Move the new axis to the original position
+        new_perm = list(range(mode)) + [ndim - 1] + list(range(mode, ndim - 1))
+        return new_tensor_permuted.permute(new_perm)
+
+    def _reconstruct_tensor(self, core_tensor, factor_matrices):
+        """
+        Reconstruct tensor from Tucker decomposition: X ≈ [[S; Q^(1), Q^(2), ..., Q^(N)]]
+        Optimized implementation
+        
+        Args:
+            core_tensor: core tensor S
+            factor_matrices: list of factor matrices [Q^(1), Q^(2), ..., Q^(N)]
+            
+        Returns:
+            reconstructed tensor
+        """
+        # Tucker decomposition reconstruction: X ≈ [[S; Q^(1), Q^(2), ..., Q^(N)]]
+        # This means: X ≈ S ×_1 Q^(1) ×_2 Q^(2) ... ×_N Q^(N)
+        
+        reconstructed = core_tensor
+        
+        # Apply factor matrices in sequence using mode_dot
+        for i, Q_n in enumerate(factor_matrices):
+            # Use mode_dot for proper tensor contraction
+            reconstructed = self._mode_dot(reconstructed, Q_n, i)
+
+        return reconstructed
+
+    def get_approximation_error(self, original_tensor: torch.Tensor, *result_matrices) -> torch.Tensor:
+        """
+        Compute approximation error for tensor decomposition
+        
+        Args:
+            original_tensor: original input tensor
+            result_matrices: (core_tensor, factor_matrices) from decomposition
+            
+        Returns:
+            relative approximation error
+        """
+        if len(result_matrices) != 2:
+            raise ValueError("Expected core_tensor and factor_matrices")
+
+        core_tensor, factor_matrices = result_matrices
+
+        # Reconstruct tensor using Tucker decomposition
+        reconstructed = self._reconstruct_tensor(core_tensor, factor_matrices)
+        
+        # Compute relative error
+        original_norm = torch.linalg.norm(original_tensor)
+        
+        return torch.linalg.norm(original_tensor - reconstructed) / original_norm
+
 
 class CURDecomposition(Decomposer):
     """
@@ -156,9 +283,24 @@ class CURDecomposition(Decomposer):
         self.stable_rank = rank
         self.distortion = distortion
 
-    def get_aproximation_error(self, original_tensor, cur_matrices: tuple):
-        C, U, R = cur_matrices
-        return torch.linalg.norm(original_tensor - C @ U @ R)
+    def get_approximation_error(self, original_tensor, *result_matrices):
+        """
+        Compute approximation error for CUR decomposition
+        
+        Args:
+            original_tensor: original input tensor
+            result_matrices: (C, U, R) from decomposition
+            
+        Returns:
+            approximation error
+        """
+        if len(result_matrices) != 3:
+            raise ValueError("Expected C, U, R")
+        
+        C, U, R = result_matrices
+        # Reconstruct matrix: A ≈ C @ U @ R
+        reconstructed = C @ U @ R
+        return torch.linalg.norm(original_tensor - reconstructed)
 
     def _decompose(self, tensor: torch.Tensor):
         if self.stable_rank is None:
@@ -199,23 +341,30 @@ class CURDecomposition(Decomposer):
 
         return C_matrix, W_matrix, R_matrix
 
-class RPHOSVDDecomposition(Decomposer):
+class RPHOSVDDecomposition(TensorDecomposer):
     """
-    Random Projection Higher Order Singular Value Decomposition (RP-HOSVD)
+    Random Projection Higher Order Singular Value Decomposition (RP-HOSVD).
     
-    This algorithm performs HOSVD decomposition using random projections for efficiency.
-    The algorithm works by:
-    1. For each tensor mode:
-       - Transpose tensor to put current mode first
-       - Apply random projection
-       - Perform QR decomposition
-    2. Compute core tensor through tensor contractions
+    This algorithm performs Tucker decomposition using random projections for 
+    computational efficiency. The method processes each tensor mode sequentially:
+    
+    1. For each mode n = 1, 2, ..., N:
+       - Unfold tensor along mode n
+       - Apply random projection to reduce dimensionality
+       - Perform QR decomposition to obtain orthogonal factor matrix
+    2. Compute core tensor via successive mode contractions
     
     Args:
-        rank: target rank for each mode (can be list or int)
-        distortion_factor: distortion factor for random projection
-        power: power iteration parameter for random projection
-        random_init: type of random initialization ('normal' or 'ortho')
+        rank: Target rank for each mode. Can be:
+            - int: Same rank for all modes
+            - List[int]: Specific rank for each mode  
+            - None: Auto-determined based on tensor dimensions
+        distortion_factor: Random projection distortion parameter (0, 1]
+        power: Power iteration parameter for improved projection quality
+        random_init: Random matrix initialization ('normal' or 'ortho')
+    
+    Returns:
+        tuple: (core_tensor, factor_matrices) representing Tucker decomposition
     """
     
     @filter_kw_universal
@@ -235,17 +384,20 @@ class RPHOSVDDecomposition(Decomposer):
     
     def _decompose(self, tensor: torch.Tensor) -> tuple:
         """
-        Decompose tensor using RP-HOSVD
+        Decompose tensor using RP-HOSVD algorithm.
+        
+        Performs Tucker decomposition by computing factor matrices for each mode
+        via random projection and QR decomposition, then contracts the tensor
+        with these factors to obtain the core tensor.
         
         Args:
-            tensor: input tensor to decompose
+            tensor: Input tensor to decompose with shape (I1, I2, ..., IN)
             
         Returns:
-            tuple: (core_tensor, factor_matrices)
+            tuple: (core_tensor, factor_matrices) where:
+                - core_tensor: Core tensor of reduced dimensions
+                - factor_matrices: List of orthogonal factor matrices for each mode
         """
-        if tensor.dim() < 2:
-            raise ValueError("Tensor must have at least 2 dimensions")
-        
         # Convert rank to list if it's a single integer
         if self.rank is None:
             # Use default ranks based on tensor dimensions
@@ -256,117 +408,55 @@ class RPHOSVDDecomposition(Decomposer):
             ranks = self.rank
             if len(ranks) != tensor.dim():
                 raise ValueError(f"Rank list length {len(ranks)} must match tensor dimensions {tensor.dim()}")
-
-        # Store original tensor shape
-        original_shape = tensor.shape
+        
+        self.original_shape = tensor.shape
         factor_matrices = []
 
-        # Process each mode
         current_tensor = tensor.clone()
         for mode_idx in range(tensor.dim()):
-            # Get current mode size and target rank
-            mode_size = current_tensor.shape[0]  # Always use first dimension after permute
+            mode_size = current_tensor.shape[mode_idx]
+            size = current_tensor.shape
+            new_size = size[:mode_idx] + size[mode_idx+1:]
+            ps = torch.prod(torch.tensor(new_size)).item()
             target_rank = min(ranks[mode_idx], mode_size)
-
-            if current_tensor.dim() > 1:
-                perm = list(range(current_tensor.dim()))
-                perm.remove(0)  # Always remove first dimension since we permute it to front
-                perm = [0] + perm
-                reshaped_tensor = current_tensor.permute(perm)
-            else:
-                reshaped_tensor = current_tensor
-
-            # Reshape to matrix: (mode_size, -1)
-            matrix_shape = (mode_size, -1)
-            matrix = reshaped_tensor.reshape(matrix_shape)
-
-            # Apply random projection
-            projection_matrix = self._apply_random_projection(matrix, target_rank)
-
-            # Perform QR decomposition on the projection matrix
-            Q, R = torch.linalg.qr(projection_matrix.T, mode='reduced')  # QR on transposed projection
-            
-            # Store factor matrix (Q has shape (mode_size, target_rank))
-            factor_matrices.append(Q)
-            
-            # Update tensor for next iteration
-            # Contract with Q.T to get reduced tensor
-            # Reshape back to tensor form
-            # Q.T has shape (target_rank, mode_size), matrix has shape (mode_size, -1)
-            # So Q.T @ matrix has shape (target_rank, -1)
-            # But we need to handle the case where Q.T and matrix have incompatible shapes
-            if Q.T.shape[1] == matrix.shape[0]:
-                contracted = Q.T @ matrix
-            else:
-                # Transpose matrix to make shapes compatible
-                contracted = Q.T @ matrix.T
-            
-            # Calculate new shape for the contracted tensor
-            new_shape = list(reshaped_tensor.shape)
-            new_shape[0] = target_rank
-            
-            # Ensure the total size matches
-            expected_size = contracted.numel()
-            actual_size = 1
-            for dim in new_shape:
-                actual_size *= dim
-            
-            if expected_size != actual_size:
-                # Adjust the shape to match the size
-                new_shape = [target_rank, -1]  # Simple 2D shape
-            
-            current_tensor = contracted.reshape(new_shape)
+            Z_n = n_mode_unfolding(current_tensor, mode_idx + 1)
+            Omega = torch.randn(ps, target_rank, device=current_tensor.device, dtype=current_tensor.dtype)
+            W_n = Z_n @ Omega
+            Q_n, R = torch.linalg.qr(W_n)
+            factor_matrices.append(Q_n)
         
-        # The final current_tensor is the core tensor
-        core_tensor = current_tensor
-        
-        return core_tensor, factor_matrices
-    
+        for n, matrix in enumerate(factor_matrices):
+            current_tensor = self._mode_dot(current_tensor, matrix.T, n)
+
+        return current_tensor, factor_matrices
+
     def _apply_random_projection(self, matrix: torch.Tensor, target_rank: int) -> torch.Tensor:
         """
-        Apply random projection to matrix
+        Apply random projection to reduce matrix dimensionality.
+        
+        Projects the input matrix to a lower-dimensional space using a random
+        projection matrix. This preserves approximate distances while reducing
+        computational cost for subsequent operations.
         
         Args:
-            matrix: input matrix
-            target_rank: target rank for projection
+            matrix: Input matrix to project with shape (m, n)
+            target_rank: Target reduced dimension for projection
             
         Returns:
-            projected matrix
+            torch.Tensor: Projected matrix with shape (target_rank, n)
         """
         m, n = matrix.shape
         
         # Generate random projection matrix
         if self.random_init == 'ortho':
-            P = self._random_gens['ortho'](target_rank, m)
+            P = _ortho_gen(target_rank, m).to(device=matrix.device, dtype=matrix.dtype)
         else:
-            P = self._random_gens['normal'](target_rank, m)
+            P = torch.randn(target_rank, m, device=matrix.device, dtype=matrix.dtype)
         
         # Simple random projection without power iteration for now
         projected = P @ matrix
         
         return projected
-    
-    def get_approximation_error(self, original_tensor: torch.Tensor, *result_matrices) -> torch.Tensor:
-        """
-        Compute approximation error for RP-HOSVD decomposition
-        
-        Args:
-            original_tensor: original input tensor
-            result_matrices: (core_tensor, factor_matrices) from decomposition
-            
-        Returns:
-            approximation error
-        """
-        if len(result_matrices) != 2:
-            raise ValueError("Expected core_tensor and factor_matrices")
-        
-        core_tensor, factor_matrices = result_matrices
-
-        core_norm = torch.linalg.norm(core_tensor)
-        original_norm = torch.linalg.norm(original_tensor)
-        
-        # Simple approximation error based on norm difference
-        return torch.abs(original_norm - core_norm)
 
 
 class BasicRandomizedSVD(Decomposer):
@@ -422,9 +512,9 @@ class BasicRandomizedSVD(Decomposer):
         
         # Step 1: Generate random matrix Ω ∈ ℝ^(J × (R + p))
         if self.random_init == 'ortho':
-            Omega = self._random_gens['ortho'](J, R + p)
+            Omega = _ortho_gen(J, R + p).to(device=matrix.device, dtype=matrix.dtype)
         else:
-            Omega = self._random_gens['normal'](J, R + p)
+            Omega = torch.randn(J, R + p, device=matrix.device, dtype=matrix.dtype)
         
         # Step 2: Form Y = (XX^T)^q XΩ
         G = matrix @ matrix.T
@@ -479,22 +569,33 @@ class BasicRandomizedSVD(Decomposer):
         return torch.linalg.norm(original_matrix - reconstructed)
 
 
-class RSTHOSVDDecomposition(Decomposer):
+class RSTHOSVDDecomposition(TensorDecomposer):
     """
-    Randomized Sequentially Truncated HOSVD (R-STHOSVD) Algorithm
+    Randomized Sequentially Truncated Higher-Order SVD (R-STHOSVD).
     
-    This algorithm performs HOSVD decomposition using randomized SVD for each mode.
-    The algorithm works by:
-    1. For each tensor mode:
-       - Apply Basic Randomized SVD to the n-unfolding matrix
-       - Update the core tensor through tensor contraction
-    2. Return the core tensor and factor matrices
+    This algorithm performs Tucker decomposition by sequentially applying randomized
+    SVD to tensor unfoldings and updating the core tensor. The sequential truncation
+    approach reduces computational complexity while maintaining approximation quality.
+    
+    Algorithm:
+    1. Initialize core tensor S = X
+    2. For each mode n = 1, 2, ..., N:
+       - Compute n-mode unfolding of current S
+       - Apply randomized SVD to obtain factor matrix Q^(n)
+       - Contract S with Q^(n)^T along mode n
+    3. Return final core tensor and all factor matrices
     
     Args:
-        rank: target rank for each mode (can be list or int)
-        oversampling: oversampling parameter for randomized SVD
-        power_iteration: power iteration parameter for randomized SVD
-        random_init: type of random initialization ('normal' or 'ortho')
+        rank: Target rank for each mode. Can be:
+            - int: Same rank for all modes
+            - List[int]: Specific rank for each mode
+            - None: Auto-determined based on tensor dimensions
+        oversampling: Oversampling parameter for randomized SVD stability
+        power_iteration: Power iterations for improved SVD approximation
+        random_init: Random matrix initialization ('normal' or 'ortho')
+    
+    Returns:
+        tuple: (core_tensor, factor_matrices) representing Tucker decomposition
     """
     
     @filter_kw_universal
@@ -509,13 +610,20 @@ class RSTHOSVDDecomposition(Decomposer):
     
     def _decompose(self, tensor: torch.Tensor) -> tuple:
         """
-        Decompose tensor using R-STHOSVD
+        Decompose tensor using R-STHOSVD algorithm.
+        
+        Implements sequential truncation approach where each mode is processed
+        in order, applying randomized SVD to the current tensor unfolding and
+        immediately updating the core tensor. This reduces memory requirements
+        compared to computing all factor matrices first.
         
         Args:
-            tensor: input tensor to decompose
+            tensor: Input tensor to decompose with shape (I1, I2, ..., IN)
             
         Returns:
-            tuple: (core_tensor, factor_matrices)
+            tuple: (core_tensor, factor_matrices) where:
+                - core_tensor: Sequentially truncated core tensor
+                - factor_matrices: List of factor matrices from randomized SVD
         """
         if tensor.dim() < 2:
             raise ValueError("Tensor must have at least 2 dimensions")
@@ -531,104 +639,84 @@ class RSTHOSVDDecomposition(Decomposer):
             if len(ranks) != tensor.dim():
                 raise ValueError(f"Rank list length {len(ranks)} must match tensor dimensions {tensor.dim()}")
         
-        # Initialize core tensor and factor matrices
-        core_tensor = tensor.clone()
+        # Step 1: Initialize S = X
+        S = tensor.clone()
+        self.original_shape = tensor.shape
         factor_matrices = []
         
-        # Process each mode
-        for mode_idx in range(tensor.dim()):
+        # Step 2: For each mode n = 1, 2, ..., N
+        for n in range(tensor.dim()):
             # Get current mode size and target rank
-            mode_size = core_tensor.shape[0]  # Always use first dimension after permute
-            target_rank = min(ranks[mode_idx], mode_size)
+            mode_size = tensor.shape[n]
+            target_rank = min(ranks[n], mode_size)
             
-            # Reshape tensor to put current mode first
-            # Move current mode to first position
-            if core_tensor.dim() > 1:
-                perm = list(range(core_tensor.dim()))
-                perm.remove(0)  # Always remove first dimension since we permute it to front
-                perm = [0] + perm
-                reshaped_tensor = core_tensor.permute(perm)
-            else:
-                reshaped_tensor = core_tensor
+            # Get n-unfolding of current core tensor S
+            S_n = n_mode_unfolding(S, n + 1)  # n+1 because n_mode_unfolding uses 1-indexed
             
-            # Reshape to matrix: (mode_size, -1)
-            matrix_shape = (mode_size, -1)
-            matrix = reshaped_tensor.reshape(matrix_shape)
+            # Apply Algorithm 1 (Basic Randomized SVD) to S^(n) with target rank R_n
+            # Increase power iterations for larger tensors
+            power_iter = self.power_iteration
+            if tensor.numel() > 10000:  # For large tensors
+                power_iter = max(self.power_iteration, 4)
             
-            # Apply Basic Randomized SVD to the n-unfolding matrix
+            # Increase oversampling for larger tensors
+            oversampling = self.oversampling
+            if tensor.numel() > 10000:  # For large tensors
+                oversampling = max(self.oversampling, 20)
+            
             rsvd = BasicRandomizedSVD(
                 target_rank=target_rank,
-                oversampling=self.oversampling,
-                power_iteration=self.power_iteration,
+                oversampling=oversampling,
+                power_iteration=power_iter,
                 random_init=self.random_init
             )
-            U, S, V = rsvd.decompose(matrix)
+            Q_n, _, _ = rsvd.decompose(S_n)
             
-            # Store factor matrix (Q^(n) = U)
-            factor_matrices.append(U)
+            # Store factor matrix Q^(n)
+            factor_matrices.append(Q_n)
             
-            # Update core tensor: S = S ×_n Q^(n)^T
-            # Contract with U.T to get reduced tensor
-            contracted = U.T @ matrix
-            
-            # Calculate new shape for the contracted tensor
-            new_shape = list(reshaped_tensor.shape)
-            new_shape[0] = target_rank
-            
-            # Ensure the total size matches
-            expected_size = contracted.numel()
-            actual_size = 1
-            for dim in new_shape:
-                actual_size *= dim
-            
-            if expected_size != actual_size:
-                # Adjust the shape to match the size
-                new_shape = [target_rank, -1]  # Simple 2D shape
-            
-            core_tensor = contracted.reshape(new_shape)
+            # Update S = S ×_n Q^(n)^T
+            # This contracts the tensor S with the transpose of Q_n along mode n
+            # The result should be a tensor with reduced dimension along mode n
+            # Note: We need to ensure that the contraction is done correctly
+            # For Tucker decomposition, we need to contract along the correct mode
+            S = self._mode_dot(S, Q_n.T, n)
         
-        return core_tensor, factor_matrices
-    
-    def get_approximation_error(self, original_tensor: torch.Tensor, *result_matrices) -> torch.Tensor:
-        """
-        Compute approximation error for R-STHOSVD decomposition
-        
-        Args:
-            original_tensor: original input tensor
-            result_matrices: (core_tensor, factor_matrices) from decomposition
-            
-        Returns:
-            approximation error
-        """
-        if len(result_matrices) != 2:
-            raise ValueError("Expected core_tensor and factor_matrices")
-        
-        core_tensor, factor_matrices = result_matrices
-        
-        # For now, return a simple error based on the core tensor size
-        # This is a placeholder - proper reconstruction would require more complex tensor operations
-        core_norm = torch.linalg.norm(core_tensor)
-        original_norm = torch.linalg.norm(original_tensor)
-        
-        # Simple approximation error based on norm difference
-        return torch.abs(original_norm - core_norm)
+        # Return core tensor S and factor matrices
+        return S, factor_matrices
 
-class RSTDecomposition(Decomposer):
+
+class RSTDecomposition(TensorDecomposer):
     """
-    Randomized Sampling Tucker Approximation (R-ST) Algorithm
+    Randomized Sampling Tucker (R-ST) Decomposition.
     
-    This algorithm performs Tucker decomposition using random sampling of columns
-    from tensor unfoldings. The algorithm works by:
+    This algorithm performs Tucker decomposition using probabilistic column sampling
+    from tensor mode unfoldings. Instead of computing full SVDs, it selects the most
+    important columns based on various sampling strategies, making it suitable for
+    very large tensors where memory is constrained.
+    
+    Algorithm:
     1. For each mode n = 1, 2, ..., N:
-       - Sample columns from X(n) based on probability distribution
-       - Store them in factor matrix Q(n) ∈ ℝ^(In × Rn)
-    2. Compute core tensor S = X ×₁ Q₁^† ×₂ Q₂^† ... ×ₙ Qₙ^†
+       - Compute n-mode unfolding X(n)
+       - Sample columns based on importance (norm, leverage scores, etc.)
+       - Store sampled columns as factor matrix Q(n)
+    2. Compute core tensor via successive pseudoinverse contractions:
+       S = X ×₁ Q₁^† ×₂ Q₂^† ... ×ₙ Qₙ^†
     
     Args:
-        rank: target rank for each mode (can be list or int)
-        sampling_method: method for column sampling ('uniform', 'norm_based', 'leverage_score')
-        distortion_factor: distortion factor for random projection
-        random_init: type of random initialization ('normal' or 'ortho')
+        rank: Target rank for each mode. Can be:
+            - int: Same rank for all modes
+            - List[int]: Specific rank for each mode
+            - None: Auto-determined based on tensor dimensions
+        sampling_method: Column sampling strategy:
+            - 'uniform': Random uniform sampling
+            - 'norm_based': Probability proportional to column norms
+            - 'leverage_score': Sampling based on statistical leverage
+        distortion_factor: Controls approximation quality vs speed trade-off
+        random_init: Random matrix initialization ('normal' or 'ortho')
+    
+    Returns:
+        tuple: (core_tensor, factor_matrices) representing Tucker decomposition
     """
     
     @filter_kw_universal
@@ -648,13 +736,19 @@ class RSTDecomposition(Decomposer):
     
     def _decompose(self, tensor: torch.Tensor) -> tuple:
         """
-        Decompose tensor using R-ST algorithm
+        Decompose tensor using R-ST algorithm.
+        
+        Performs Tucker decomposition by sampling important columns from each
+        tensor mode unfolding based on the specified sampling strategy, then
+        computing the core tensor via pseudoinverse contractions.
         
         Args:
-            tensor: input tensor to decompose
+            tensor: Input tensor to decompose with shape (I1, I2, ..., IN)
             
         Returns:
-            tuple: (core_tensor, factor_matrices)
+            tuple: (core_tensor, factor_matrices) where:
+                - core_tensor: Core tensor computed via pseudoinverse contractions
+                - factor_matrices: List of sampled column matrices for each mode
         """
         if tensor.dim() < 2:
             raise ValueError("Tensor must have at least 2 dimensions")
@@ -671,7 +765,7 @@ class RSTDecomposition(Decomposer):
                 raise ValueError(f"Rank list length {len(ranks)} must match tensor dimensions {tensor.dim()}")
         
         # Store original tensor shape
-        original_shape = tensor.shape
+        self.original_shape = tensor.shape
         factor_matrices = []
         
         # Step 1: For each mode n = 1, 2, ..., N
@@ -679,42 +773,38 @@ class RSTDecomposition(Decomposer):
             mode_size = tensor.shape[mode_idx]
             target_rank = min(ranks[mode_idx], mode_size)
 
-            perm = list(range(tensor.dim()))
-            perm.remove(mode_idx)
-            perm = [mode_idx] + perm
+            # Get n-mode unfolding efficiently
+            unfolding = n_mode_unfolding(tensor, mode_idx + 1)
             
-            # Permute tensor and reshape to matrix
-            unfolded_tensor = tensor.permute(perm)
-            matrix_shape = (mode_size, -1)
-            matrix = unfolded_tensor.reshape(matrix_shape)
-            
-            # Step 2: Sample columns from X(n) based on probability distribution
-            Q_n = self._sample_columns(matrix, target_rank)
-            
-            # Store factor matrix
+            # Sample columns using the specified method
+            Q_n = self._sample_columns(unfolding, target_rank)
             factor_matrices.append(Q_n)
         
-        # Step 3: Compute core tensor S = X ×₁ Q₁^† ×₂ Q₂^† ... ×ₙ Qₙ^†
+        # Step 2: Compute core tensor efficiently
         core_tensor = self._compute_core_tensor(tensor, factor_matrices)
         
         return core_tensor, factor_matrices
     
     def _sample_columns(self, matrix: torch.Tensor, target_rank: int) -> torch.Tensor:
         """
-        Sample columns from matrix based on probability distribution
+        Sample columns from matrix based on importance sampling strategy.
+        
+        Selects the most important columns from the tensor mode unfolding
+        according to the specified sampling method. This reduces computational
+        cost compared to full SVD while preserving the most significant information.
         
         Args:
-            matrix: input matrix (n-unfolding of tensor)
-            target_rank: target rank for this mode
+            matrix: Tensor mode unfolding with shape (mode_size, other_dims_product)
+            target_rank: Number of columns to sample for this mode
             
         Returns:
-            sampled columns matrix Q(n) ∈ ℝ^(In × Rn)
+            torch.Tensor: Sampled columns matrix with shape (mode_size, target_rank)
         """
         In, J = matrix.shape  # In is mode size, J is product of other dimensions
         
         if self.sampling_method == 'uniform':
             # Uniform random sampling
-            indices = torch.randperm(J)[:target_rank]
+            indices = torch.randperm(J, device=matrix.device)[:target_rank]
             Q_n = matrix[:, indices]
             
         elif self.sampling_method == 'norm_based':
@@ -753,14 +843,19 @@ class RSTDecomposition(Decomposer):
     
     def _compute_core_tensor(self, tensor: torch.Tensor, factor_matrices: List[torch.Tensor]) -> torch.Tensor:
         """
-        Compute core tensor S = X ×₁ Q₁^† ×₂ Q₂^† ... ×ₙ Qₙ^†
+        Compute core tensor via successive pseudoinverse contractions.
+        
+        Contracts the original tensor with the pseudoinverse of each factor matrix
+        along the corresponding mode: S = X ×₁ Q₁^† ×₂ Q₂^† ... ×ₙ Qₙ^†
+        This gives the optimal core tensor in the least-squares sense for the
+        given factor matrices.
         
         Args:
-            tensor: original input tensor
-            factor_matrices: list of factor matrices [Q₁, Q₂, ..., Qₙ]
+            tensor: Original input tensor with shape (I1, I2, ..., IN)
+            factor_matrices: List of sampled factor matrices [Q₁, Q₂, ..., Qₙ]
             
         Returns:
-            core tensor S
+            torch.Tensor: Core tensor with reduced dimensions matching factor matrix ranks
         """
         # Start with the original tensor
         core_tensor = tensor.clone()
@@ -770,62 +865,11 @@ class RSTDecomposition(Decomposer):
             # Compute pseudoinverse of Q_n
             Q_n_pinv = torch.linalg.pinv(Q_n)
             
-            # Move current mode to first position
-            perm = list(range(core_tensor.dim()))
-            perm.remove(mode_idx)
-            perm = [mode_idx] + perm
-            
-            # Permute tensor and reshape to matrix
-            permuted_tensor = core_tensor.permute(perm)
-            matrix_shape = (core_tensor.shape[mode_idx], -1)
-            matrix = permuted_tensor.reshape(matrix_shape)
-            
-            # Contract: matrix = Q_n_pinv @ matrix
-            contracted = Q_n_pinv @ matrix
-            
-            # Reshape back to tensor form
-            new_shape = list(permuted_tensor.shape)
-            new_shape[0] = contracted.shape[0]  # Update first dimension
-            
-            # Ensure the total size matches
-            expected_size = contracted.numel()
-            actual_size = 1
-            for dim in new_shape:
-                actual_size *= dim
-            
-            if expected_size != actual_size:
-                # Adjust the shape to match the size
-                new_shape = [contracted.shape[0], -1]  # Simple 2D shape
-            
-            # Reshape and permute back
-            reshaped = contracted.reshape(new_shape)
-            
-            # Update core tensor for next iteration
-            core_tensor = reshaped
+            # Use mode_dot for proper tensor contraction
+            core_tensor = self._mode_dot(core_tensor, Q_n_pinv, mode_idx)
         
         return core_tensor
-    
-    def get_approximation_error(self, original_tensor: torch.Tensor, *result_matrices) -> torch.Tensor:
-        """
-        Compute approximation error for R-ST decomposition
-        
-        Args:
-            original_tensor: original input tensor
-            result_matrices: (core_tensor, factor_matrices) from decomposition
-            
-        Returns:
-            approximation error
-        """
-        if len(result_matrices) != 2:
-            raise ValueError("Expected core_tensor and factor_matrices")
-        
-        core_tensor, factor_matrices = result_matrices
 
-        core_norm = torch.linalg.norm(core_tensor)
-        original_norm = torch.linalg.norm(original_tensor)
-        
-        # Simple approximation error based on norm difference
-        return torch.abs(original_norm - core_norm)
 
 DECOMPOSERS = {
     'svd': SVDDecomposition,
