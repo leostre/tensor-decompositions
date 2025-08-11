@@ -23,7 +23,7 @@ def _need_t(f):
     return _wrapper
 
 class Decomposer(ABC):
-    def __init__(self, rank: Union[int, float], distortion_factor: float = 0.6, 
+    def __init__(self, rank: Union[int, float] = None, distortion_factor: float = 0.6, 
                  random_init: str = 'normal'):
         assert 0 < distortion_factor <= 1, 'distortion_factor must be in (0, 1]'
         self.distortion_factor = distortion_factor
@@ -37,19 +37,19 @@ class Decomposer(ABC):
         elif isinstance(rank, float):
             rank = max(1, int(rank * min(W.size())))
         if not self._is_big(W):
-            return self._decompose(W, *args, **kwargs)
+            return self._decompose(W, rank, *args, **kwargs)
         else:
-            return self._decompose_big(W, *args, **kwargs)
+            return self._decompose_big(W, rank, *args, **kwargs)
         
     def _is_big(self, W: torch.Tensor):
         return sum(W.size()) > DIM_SUM_LIM or any(d > DIM_LIM for d in W.size())
 
     @abstractmethod
-    def _decompose(self, W, *args, **kwargs):
+    def _decompose(self, W, rank, *args, **kwargs):
         pass
     
-    def _decompose_big(self, W, *args, **kwargs):
-        return self._decompose(W, *args, **kwargs)
+    def _decompose_big(self, W, rank, *args, **kwargs):
+        return self._decompose(W, rank, *args, **kwargs)
     
     def estimate_stable_rank(self, W):
         n_samples = max(W.shape)
