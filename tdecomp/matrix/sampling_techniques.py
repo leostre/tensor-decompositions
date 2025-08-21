@@ -1,61 +1,88 @@
 import torch
+from tdecomp._base import BaseSketch, _need_t
 
 __all__ = [
     'adaptive_sampling',
     'column_select'
 ]
 
-def adaptive_sampling_inv(X: torch.Tensor, k: int, s: int, n_iter: int = 3) -> tuple[torch.Tensor, torch.Tensor]:
+class AdaptiveSamplingSketch(BaseSketch):
     """
     Улучшенная версия adaptive_sampling (https://arxiv.org/pdf/0708.3696) с явным решением LS задач
     Args:
-        X: входная матрица (m x n)
-        k: число столбцов для первой выборки
-        s: число дополнительных столбцов
-        n_iter: количество итераций уточнения
+        sketch_size: Желаемый размер скетча (абсолютный или относительный)
+        compression_ratio: Коэффициент сжатия для автоматического определения размера скетча
+        power_iterations: Количество степенных итераций для оценки важности столбцов
+                         (больше итераций → точнее оценка, но медленнее)
     Returns:
-        S, B
+        Матрица скетча 
     """
-    X_pinv = torch.linalg.pinv(X)  
-    initial_cols = torch.randperm(X_pinv.size(1))[:k]
-    S = X_pinv[:, initial_cols]
-    
-    for _ in range(n_iter):
-        B = torch.linalg.lstsq(S, X_pinv).solution
-        residual = X_pinv - S @ B
-        probs = torch.norm(residual, p=2, dim=0)**2
-        probs /= probs.sum()
-        extra_cols = torch.multinomial(probs, s, replacement=False)
-        S = torch.cat([S, X_pinv[:, extra_cols]], dim=1)
-    
-    B = torch.linalg.lstsq(S, X_pinv).solution
-    return S, B
+    def __init__(self, sketch_size: int | None = None, 
+                 compression_ratio: float = 0.5,
+                 power_iterations: int = 2):
+        super().__init__(sketch_size, compression_ratio, 'adaptive')
+        self.power_iterations = power_iterations
+
+    def _estimate_column_importance(self, matrix: torch.Tensor) -> torch.Tensor:
+        n_cols = matrix.size(1)
+        v = torch.randn(n_cols, 1, device=matrix.device, dtype=matrix.dtype)
+        
+        for _ in range(self.power_iterations):
+            v = matrix.T @ (matrix @ v)
+            v /= torch.norm(v)
+        
+        importance = torch.abs(matrix @ v).squeeze()
+        return importance / importance.sum()
+
+    def _sketch(self, matrix: torch.Tensor, sketch_size: int) -> torch.Tensor:
+        m, n = matrix.shape
+        col_importance = self._estimate_column_importance(matrix)
+        selected_cols = torch.multinomial(col_importance, sketch_size, replacement=False)
+        
+        return matrix[:, selected_cols]
 
 
-def column_select_inv(X: torch.Tensor, k: int, epsilon: float = 0.1) -> tuple[torch.Tensor, torch.Tensor]:
+class ColumnSelectSketch(BaseSketch):
     """
-    Модифицированный ColumnSelect (file:///C:/Users/user/Downloads/Telegram%20Desktop/Randomized_Algorithms_for_Computation_of_Tucker_Decomposition_and.pdf)
+     Модифицированный ColumnSelect 
     Args:
-        A: Входная матрица (m x n)
-        k: Целевой ранг аппроксимации
+        sketch_size: Размер скетча
+        compression_ratio: Коэффициент сжатия
         epsilon: Параметр точности
+        power_iterations: Количество степенных итераций для оценки leverage scores
     Returns:
-        S, B
+        Матрица скетча
     """
-    X_pinv = torch.linalg.pinv(X)
-    m, n = X_pinv.shape
-    Q, _ = torch.linalg.qr(X_pinv)
-    U = Q[:, :k]  
-    leverage_scores = torch.norm(U, dim=1)**2
-    c = int(k * torch.log(torch.tensor(k)) / epsilon**2)
-    c = min(c, n)
-    probs = leverage_scores / k
-    selected_cols = torch.multinomial(probs, c, replacement=True)
-    S = X_pinv[:, selected_cols]
-    B = torch.linalg.lstsq(S, X_pinv).solution
-    return S, B
+    def __init__(self, sketch_size: int | None = None,
+                 compression_ratio: float = 0.5,
+                 epsilon: float = 0.1,
+                 power_iterations: int = 2):
+        super().__init__(sketch_size, compression_ratio, 'leverage')
+        self.epsilon = epsilon
+        self.power_iterations = power_iterations
+
+    def _fast_leverage_scores(self, matrix: torch.Tensor, k: int) -> torch.Tensor:
+        m, n = matrix.shape
+        random_matrix = torch.randn(n, k, device=matrix.device, dtype=matrix.dtype)
+        projected = matrix @ random_matrix
+        Q, _ = torch.linalg.qr(projected, mode='reduced')
+        leverage_scores = torch.norm(Q, dim=1)**2
+        return leverage_scores / leverage_scores.sum()
+
+    def _sketch(self, matrix: torch.Tensor, sketch_size: int) -> torch.Tensor:
+        m, n = matrix.shape
+        
+        k_approx = min(10, sketch_size)
+        leverage_scores = self._fast_leverage_scores(matrix, k_approx)
+        
+        c = int(sketch_size * torch.log(torch.tensor(sketch_size + 1)) / self.epsilon**2)
+        c = min(c, n, sketch_size)
+        
+        selected_cols = torch.multinomial(leverage_scores, c, replacement=True)
+        return matrix[:, selected_cols]
+
 
 SAMPLING_TECHNIQUES = {
-        'adaptive_sampling' : adaptive_sampling_inv,
-        'column_select' : column_select_inv
-    }
+    'adaptive_sampling': AdaptiveSamplingSketch,
+    'column_select': ColumnSelectSketch
+}
