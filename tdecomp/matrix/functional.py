@@ -18,7 +18,7 @@ def __base_dec_gen(method_name, ):
     method = __functionals[method_name]
     exec(
 f'''
-def {method_name}(matrix, n_eigenvecs,  **kwargs):
+def {method_name}(matrix, n_eigenvecs=None,  **kwargs):
     """
     {method.__doc__}
     """
