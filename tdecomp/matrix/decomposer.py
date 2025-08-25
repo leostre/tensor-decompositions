@@ -117,6 +117,12 @@ class CURDecomposition(Decomposer):
             return_samples: whether to return the samples or the decomposition matrices
 
     """
+    def __init__(self, *, tolerance: int , rank: Optional[int] = None, return_samples: bool = False):
+        self.stable_rank = rank
+        self.tolerance = tolerance
+        self.return_samples = return_samples
+
+
     def _decompose(self, X: torch.Tensor, rank: int = None):
         rank = rank or self.rank or self.estimate_stable_rank(X)
         # create sub matrices for CUR-decompostion
@@ -125,6 +131,25 @@ class CURDecomposition(Decomposer):
         u = torch.linalg.pinv(w)
         # aprox U using pseudoinverse
         return (c, u, r)
+    
+    def _find_optimal_rank(self, X: torch.Tensor) -> int:
+        max_rank = min(X.shape)
+        low, high = 1, max_rank
+        best_rank = max_rank
+
+        while low <= high:
+            mid = (low + high) // 2
+            c, w, r = self.select_rows_cols(X, mid)
+            u = torch.linalg.pinv(w)
+            error = torch.norm(X - c @ u @ r, 'fro').item()
+
+            if error <= self.tolerance:
+                best_rank = mid
+                high = mid - 1
+            else:
+                low = mid + 1
+
+        return best_rank
 
     def _importance(self, X, p):
         ax = 0
