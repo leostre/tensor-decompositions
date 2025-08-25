@@ -25,7 +25,7 @@ class OptimizerConfig:
     rank: int = 128
     scale: float = 1.0
     proj_type: Literal["low_rank", "structured_sparse", "unstructured_sparse"] = "low_rank"
-    galore_2d_proj_type: Literal["std", "reverse_std", "right", "left", "full"] = "std"
+    galore_2d_proj_type: Literal["right", "left", "full"] = "left"
     sparse_ratio: float = 0.1  # Ratio of elements to keep in sparse projections
     sparse_type: Literal['topk', 'randK', 'probability'] = "topk"
     scale_by_mask_ratio: bool = True

@@ -5,7 +5,7 @@ from tensorly import tenalg
 from torch.utils.checkpoint import checkpoint
 
 class GaLoreProjector:
-    def __init__(self, rank, verbose=False, svd_type=None, update_gap_scheduler=None, scale=1.0, galore_2d_proj_type='std', activation_checkpoint=False, support_complex=False):
+    def __init__(self, rank, verbose=False, svd_type=None, update_gap_scheduler=None, scale=1.0, galore_2d_proj_type='left', activation_checkpoint=False, support_complex=False):
         self.rank = rank
         self.verbose = verbose
         self.update_gap_scheduler = update_gap_scheduler
@@ -20,19 +20,6 @@ class GaLoreProjector:
             print(f"rank={self.rank}, scale={self.scale}, galore_2d_proj_type={self.galore_2d_proj_type}, activation_checkpointing={self.activation_checkpointing}, support_complex={self.support_complex}")
             print(f"GaLoreProjector initialized with rank={self.rank}, scale={self.scale}, galore_2d_proj_type={self.galore_2d_proj_type}, activation_checkpointing={self.activation_checkpointing}, support_complex={self.support_complex}")
 
-    def _project_std(self, full_rank_grad):
-        if full_rank_grad.shape[0] >= full_rank_grad.shape[1]:
-            low_rank_grad = optional_checkpoint_matmul(full_rank_grad, self.ortho_matrix.t(), self.activation_checkpointing)
-        else:
-            low_rank_grad = optional_checkpoint_matmul(self.ortho_matrix.t(), full_rank_grad, self.activation_checkpointing)
-        return low_rank_grad
-
-    def _project_reverse_std(self, full_rank_grad):
-        if full_rank_grad.shape[0] >= full_rank_grad.shape[1]:
-            low_rank_grad = optional_checkpoint_matmul(self.ortho_matrix.t(), full_rank_grad, self.activation_checkpointing)
-        else:
-            low_rank_grad = optional_checkpoint_matmul(full_rank_grad, self.ortho_matrix.t(), self.activation_checkpointing)
-        return low_rank_grad
 
     def _project_right(self, full_rank_grad):
         low_rank_grad = optional_checkpoint_matmul(full_rank_grad, self.ortho_matrix.t(), self.activation_checkpointing)
@@ -55,37 +42,6 @@ class GaLoreProjector:
                                                            type=type_) 
         low_rank_grad = getattr(self, f'_project_{type_}')(full_rank_grad)                              
         return low_rank_grad
-    
-    def _project_back_std(self, low_rank_grad):
-        if self._recon_buffer is None:
-            if low_rank_grad.shape[0] >= low_rank_grad.shape[1]:
-                self._recon_buffer = torch.zeros((low_rank_grad.shape[0], self.ortho_matrix.shape[1]), 
-                                                   dtype=low_rank_grad.dtype, device=low_rank_grad.device)
-            else:
-                self._recon_buffer = torch.zeros((self.ortho_matrix.shape[0], low_rank_grad.shape[1]), 
-                                                dtype=low_rank_grad.dtype, device=low_rank_grad.device)
-        self._recon_buffer.zero_()
-        if low_rank_grad.shape[0] >= low_rank_grad.shape[1]:
-                torch.matmul(low_rank_grad, self.ortho_matrix, out=self._recon_buffer)
-        else:
-            torch.matmul(self.ortho_matrix, low_rank_grad, out=self._recon_buffer)
-        return self._recon_buffer * self.scale
-    
-    def _project_back_reverse_std(self, low_rank_grad):
-        if self._recon_buffer is None:
-            if low_rank_grad.shape[0] <= low_rank_grad.shape[1]:
-                self._recon_buffer = torch.zeros((self.ortho_matrix.shape[0], low_rank_grad.shape[1]), 
-                                                       dtype=low_rank_grad.dtype, device=low_rank_grad.device)
-            else:
-                self._recon_buffer = torch.zeros((low_rank_grad.shape[0], self.ortho_matrix.shape[1]), 
-                                                       dtype=low_rank_grad.dtype, device=low_rank_grad.device)
-        self._recon_buffer.zero_()
-        if low_rank_grad.shape[0] <= low_rank_grad.shape[1]:
-            torch.matmul(self.ortho_matrix, low_rank_grad, out=self._recon_buffer)
-        else:
-            torch.matmul(low_rank_grad, self.ortho_matrix, out=self._recon_buffer)
-        return self._recon_buffer * self.scale
-    
 
     def _project_back_right(self, low_rank_grad):
         if self._recon_buffer is None:
