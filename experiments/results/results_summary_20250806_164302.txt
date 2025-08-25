@@ -1,0 +1,139 @@
+=== EXPERIMENT RESULTS SUMMARY ===
+
+Number of repeats: 20
+Device: cuda
+CSV results saved to: results/results_summary_20250806_164302.csv
+
+
+=== MATRIX SHAPE: 16x16 ===
+svd_baseline    | Error: 4.206e-05 ± 1.2e-05 | Time: 0.001 ± 0.001s | Rank: 16.0 ± 0.0
+identity_copies | Error: 4.804e-05 ± 1.1e-05 | Time: 0.002 ± 0.000s | Rank: 16.0 ± 0.0
+iid_entries     | Error: 4.557e-05 ± 9.6e-06 | Time: 0.001 ± 0.000s | Rank: 16.0 ± 0.0
+lean_walsh      | Error: 4.939e-05 ± 1.1e-05 | Time: 0.001 ± 0.000s | Rank: 16.0 ± 0.0
+normal          | Error: 4.993e-05 ± 9.2e-06 | Time: 0.001 ± 0.000s | Rank: 16.0 ± 0.0
+ortho           | Error: 4.763e-05 ± 1.0e-05 | Time: 0.002 ± 0.000s | Rank: 16.0 ± 0.0
+
+=== MATRIX SHAPE: 32x32 ===
+svd_baseline    | Error: 1.446e-04 ± 1.6e-05 | Time: 0.001 ± 0.000s | Rank: 32.0 ± 0.0
+identity_copies | Error: 1.508e-04 ± 1.9e-05 | Time: 0.002 ± 0.000s | Rank: 32.0 ± 0.0
+iid_entries     | Error: 1.532e-04 ± 2.7e-05 | Time: 0.002 ± 0.000s | Rank: 32.0 ± 0.0
+lean_walsh      | Error: 1.593e-04 ± 2.1e-05 | Time: 0.002 ± 0.000s | Rank: 32.0 ± 0.0
+normal          | Error: 1.497e-04 ± 1.8e-05 | Time: 0.003 ± 0.001s | Rank: 32.0 ± 0.0
+ortho           | Error: 1.537e-04 ± 2.2e-05 | Time: 0.003 ± 0.001s | Rank: 32.0 ± 0.0
+
+=== MATRIX SHAPE: 64x64 ===
+svd_baseline    | Error: 5.883e-04 ± 4.8e-05 | Time: 0.003 ± 0.000s | Rank: 64.0 ± 0.0
+identity_copies | Error: 5.457e-04 ± 3.7e-05 | Time: 0.007 ± 0.000s | Rank: 64.0 ± 0.0
+iid_entries     | Error: 5.548e-04 ± 4.9e-05 | Time: 0.007 ± 0.001s | Rank: 64.0 ± 0.0
+lean_walsh      | Error: 5.667e-04 ± 5.1e-05 | Time: 0.007 ± 0.002s | Rank: 64.0 ± 0.0
+normal          | Error: 5.622e-04 ± 4.7e-05 | Time: 0.007 ± 0.001s | Rank: 64.0 ± 0.0
+ortho           | Error: 5.587e-04 ± 4.4e-05 | Time: 0.008 ± 0.002s | Rank: 64.0 ± 0.0
+
+=== MATRIX SHAPE: 128x128 ===
+svd_baseline    | Error: 3.328e-03 ± 1.1e-04 | Time: 0.006 ± 0.001s | Rank: 128.0 ± 0.0
+identity_copies | Error: 3.201e-03 ± 1.2e-04 | Time: 0.013 ± 0.001s | Rank: 128.0 ± 0.0
+iid_entries     | Error: 3.211e-03 ± 1.8e-04 | Time: 0.013 ± 0.001s | Rank: 128.0 ± 0.0
+lean_walsh      | Error: 3.143e-03 ± 1.5e-04 | Time: 0.014 ± 0.001s | Rank: 128.0 ± 0.0
+normal          | Error: 3.133e-03 ± 1.8e-04 | Time: 0.013 ± 0.001s | Rank: 128.0 ± 0.0
+ortho           | Error: 3.212e-03 ± 1.5e-04 | Time: 0.014 ± 0.002s | Rank: 128.0 ± 0.0
+
+=== MATRIX SHAPE: 256x16 ===
+identity_copies | Error: 1.734e-04 ± 2.9e-05 | Time: 0.004 ± 0.000s | Rank: 16.0 ± 0.0
+iid_entries     | Error: 1.675e-04 ± 2.7e-05 | Time: 0.005 ± 0.000s | Rank: 16.0 ± 0.0
+lean_walsh      | Error: 1.689e-04 ± 2.8e-05 | Time: 0.004 ± 0.000s | Rank: 16.0 ± 0.0
+normal          | Error: 1.715e-04 ± 2.2e-05 | Time: 0.003 ± 0.000s | Rank: 16.0 ± 0.0
+ortho           | Error: 1.723e-04 ± 3.0e-05 | Time: 0.006 ± 0.001s | Rank: 16.0 ± 0.0
+
+=== MATRIX SHAPE: 256x32 ===
+identity_copies | Error: 3.731e-04 ± 2.9e-05 | Time: 0.005 ± 0.000s | Rank: 32.0 ± 0.0
+iid_entries     | Error: 3.900e-04 ± 3.0e-05 | Time: 0.005 ± 0.000s | Rank: 32.0 ± 0.0
+lean_walsh      | Error: 3.845e-04 ± 3.9e-05 | Time: 0.005 ± 0.000s | Rank: 32.0 ± 0.0
+normal          | Error: 3.764e-04 ± 3.3e-05 | Time: 0.004 ± 0.000s | Rank: 32.0 ± 0.0
+ortho           | Error: 3.713e-04 ± 4.1e-05 | Time: 0.007 ± 0.001s | Rank: 32.0 ± 0.0
+
+=== MATRIX SHAPE: 256x64 ===
+identity_copies | Error: 1.138e-03 ± 9.1e-05 | Time: 0.007 ± 0.001s | Rank: 64.0 ± 0.0
+iid_entries     | Error: 1.171e-03 ± 1.4e-04 | Time: 0.007 ± 0.000s | Rank: 64.0 ± 0.0
+lean_walsh      | Error: 1.151e-03 ± 9.7e-05 | Time: 0.008 ± 0.001s | Rank: 64.0 ± 0.0
+normal          | Error: 1.139e-03 ± 9.9e-05 | Time: 0.006 ± 0.000s | Rank: 64.0 ± 0.0
+ortho           | Error: 1.160e-03 ± 1.6e-04 | Time: 0.009 ± 0.001s | Rank: 64.0 ± 0.0
+
+=== MATRIX SHAPE: 256x128 ===
+identity_copies | Error: 3.831e-03 ± 2.1e-04 | Time: 0.010 ± 0.000s | Rank: 128.0 ± 0.0
+iid_entries     | Error: 3.737e-03 ± 2.2e-04 | Time: 0.010 ± 0.000s | Rank: 128.0 ± 0.0
+lean_walsh      | Error: 3.802e-03 ± 1.8e-04 | Time: 0.010 ± 0.000s | Rank: 128.0 ± 0.0
+normal          | Error: 3.764e-03 ± 1.9e-04 | Time: 0.010 ± 0.000s | Rank: 128.0 ± 0.0
+ortho           | Error: 3.754e-03 ± 1.7e-04 | Time: 0.011 ± 0.000s | Rank: 128.0 ± 0.0
+
+=== MATRIX SHAPE: 256x256 ===
+svd_baseline    | Error: 1.666e-02 ± 4.1e-04 | Time: 0.013 ± 0.001s | Rank: 256.0 ± 0.0
+identity_copies | Error: 1.568e-02 ± 2.5e-04 | Time: 0.028 ± 0.001s | Rank: 256.0 ± 0.0
+identity_copies | Error: 1.579e-02 ± 3.5e-04 | Time: 0.016 ± 0.001s | Rank: 256.0 ± 0.0
+iid_entries     | Error: 1.539e-02 ± 4.3e-04 | Time: 0.028 ± 0.001s | Rank: 256.0 ± 0.0
+iid_entries     | Error: 1.558e-02 ± 3.7e-04 | Time: 0.017 ± 0.000s | Rank: 256.0 ± 0.0
+lean_walsh      | Error: 1.565e-02 ± 4.1e-04 | Time: 0.028 ± 0.001s | Rank: 256.0 ± 0.0
+lean_walsh      | Error: 1.548e-02 ± 4.4e-04 | Time: 0.017 ± 0.001s | Rank: 256.0 ± 0.0
+normal          | Error: 1.561e-02 ± 4.0e-04 | Time: 0.026 ± 0.001s | Rank: 256.0 ± 0.0
+normal          | Error: 1.588e-02 ± 5.8e-04 | Time: 0.016 ± 0.000s | Rank: 256.0 ± 0.0
+ortho           | Error: 1.559e-02 ± 4.9e-04 | Time: 0.031 ± 0.002s | Rank: 256.0 ± 0.0
+ortho           | Error: 1.558e-02 ± 5.0e-04 | Time: 0.019 ± 0.001s | Rank: 256.0 ± 0.0
+
+=== MATRIX SHAPE: 256x512 ===
+identity_copies | Error: 1.937e-02 ± 4.0e-04 | Time: 0.017 ± 0.000s | Rank: 256.0 ± 0.0
+iid_entries     | Error: 1.932e-02 ± 3.3e-04 | Time: 0.018 ± 0.000s | Rank: 256.0 ± 0.0
+lean_walsh      | Error: 1.947e-02 ± 3.2e-04 | Time: 0.018 ± 0.001s | Rank: 256.0 ± 0.0
+normal          | Error: 1.942e-02 ± 4.0e-04 | Time: 0.017 ± 0.000s | Rank: 256.0 ± 0.0
+ortho           | Error: 1.942e-02 ± 5.5e-04 | Time: 0.022 ± 0.001s | Rank: 256.0 ± 0.0
+
+=== MATRIX SHAPE: 256x1024 ===
+identity_copies | Error: 3.069e-02 ± 6.0e-04 | Time: 0.019 ± 0.000s | Rank: 256.0 ± 0.0
+iid_entries     | Error: 3.065e-02 ± 5.2e-04 | Time: 0.023 ± 0.000s | Rank: 256.0 ± 0.0
+lean_walsh      | Error: 3.116e-02 ± 1.2e-03 | Time: 0.024 ± 0.004s | Rank: 256.0 ± 0.0
+normal          | Error: 3.111e-02 ± 5.5e-04 | Time: 0.022 ± 0.000s | Rank: 256.0 ± 0.0
+ortho           | Error: 3.074e-02 ± 5.3e-04 | Time: 0.037 ± 0.001s | Rank: 256.0 ± 0.0
+
+=== MATRIX SHAPE: 256x2048 ===
+identity_copies | Error: 4.583e-02 ± 9.5e-04 | Time: 0.034 ± 0.001s | Rank: 256.0 ± 0.0
+iid_entries     | Error: 4.592e-02 ± 7.0e-04 | Time: 0.056 ± 0.005s | Rank: 256.0 ± 0.0
+lean_walsh      | Error: 4.598e-02 ± 8.0e-04 | Time: 0.057 ± 0.002s | Rank: 256.0 ± 0.0
+normal          | Error: 4.635e-02 ± 7.7e-04 | Time: 0.037 ± 0.000s | Rank: 256.0 ± 0.0
+ortho           | Error: 4.608e-02 ± 9.2e-04 | Time: 0.118 ± 0.005s | Rank: 256.0 ± 0.0
+
+=== MATRIX SHAPE: 256x4096 ===
+identity_copies | Error: 6.717e-02 ± 1.5e-03 | Time: 0.089 ± 0.009s | Rank: 256.0 ± 0.0
+iid_entries     | Error: 6.710e-02 ± 9.5e-04 | Time: 0.202 ± 0.011s | Rank: 256.0 ± 0.0
+lean_walsh      | Error: 6.726e-02 ± 8.8e-04 | Time: 0.296 ± 0.013s | Rank: 256.0 ± 0.0
+normal          | Error: 6.637e-02 ± 1.3e-03 | Time: 0.110 ± 0.001s | Rank: 256.0 ± 0.0
+ortho           | Error: 6.654e-02 ± 1.3e-03 | Time: 0.578 ± 0.051s | Rank: 256.0 ± 0.0
+
+=== MATRIX SHAPE: 512x512 ===
+svd_baseline    | Error: 8.556e-02 ± 1.6e-03 | Time: 0.030 ± 0.001s | Rank: 512.0 ± 0.0
+identity_copies | Error: 8.308e-02 ± 1.2e-03 | Time: 0.067 ± 0.002s | Rank: 512.0 ± 0.0
+iid_entries     | Error: 8.279e-02 ± 1.2e-03 | Time: 0.069 ± 0.001s | Rank: 512.0 ± 0.0
+lean_walsh      | Error: 8.207e-02 ± 1.7e-03 | Time: 0.067 ± 0.001s | Rank: 512.0 ± 0.0
+normal          | Error: 8.290e-02 ± 1.6e-03 | Time: 0.068 ± 0.001s | Rank: 512.0 ± 0.0
+ortho           | Error: 8.242e-02 ± 1.4e-03 | Time: 0.078 ± 0.003s | Rank: 512.0 ± 0.0
+
+=== MATRIX SHAPE: 1024x1024 ===
+svd_baseline    | Error: 3.122e-01 ± 7.5e-03 | Time: 0.083 ± 0.002s | Rank: 1024.0 ± 0.0
+identity_copies | Error: 3.246e-01 ± 4.6e-03 | Time: 0.190 ± 0.003s | Rank: 1024.0 ± 0.0
+iid_entries     | Error: 3.268e-01 ± 7.1e-03 | Time: 0.200 ± 0.009s | Rank: 1024.0 ± 0.0
+lean_walsh      | Error: 3.242e-01 ± 7.0e-03 | Time: 0.199 ± 0.004s | Rank: 1024.0 ± 0.0
+normal          | Error: 3.221e-01 ± 5.9e-03 | Time: 0.188 ± 0.004s | Rank: 1024.0 ± 0.0
+ortho           | Error: 3.253e-01 ± 4.9e-03 | Time: 0.248 ± 0.012s | Rank: 1024.0 ± 0.0
+
+=== MATRIX SHAPE: 2048x2048 ===
+svd_baseline    | Error: 1.257e+00 ± 3.7e-02 | Time: 0.245 ± 0.036s | Rank: 2048.0 ± 0.0
+identity_copies | Error: 1.355e+00 ± 2.2e-02 | Time: 0.559 ± 0.103s | Rank: 2048.0 ± 0.0
+iid_entries     | Error: 1.358e+00 ± 2.2e-02 | Time: 0.711 ± 0.016s | Rank: 2048.0 ± 0.0
+lean_walsh      | Error: 1.349e+00 ± 2.3e-02 | Time: 0.732 ± 0.012s | Rank: 2048.0 ± 0.0
+normal          | Error: 1.340e+00 ± 2.8e-02 | Time: 0.555 ± 0.070s | Rank: 2048.0 ± 0.0
+ortho           | Error: 1.358e+00 ± 2.4e-02 | Time: 0.909 ± 0.014s | Rank: 2048.0 ± 0.0
+
+=== MATRIX SHAPE: 4096x4096 ===
+svd_baseline    | Error: 4.145e+00 ± 1.4e-01 | Time: 2.693 ± 0.025s | Rank: 4096.0 ± 0.0
+identity_copies | Error: 4.428e+00 ± 9.4e-02 | Time: 4.444 ± 0.122s | Rank: 4096.0 ± 0.0
+iid_entries     | Error: 4.446e+00 ± 1.3e-01 | Time: 4.627 ± 0.116s | Rank: 4096.0 ± 0.0
+lean_walsh      | Error: 4.470e+00 ± 1.2e-01 | Time: 4.775 ± 0.147s | Rank: 4096.0 ± 0.0
+normal          | Error: 4.506e+00 ± 1.1e-01 | Time: 4.528 ± 0.035s | Rank: 4096.0 ± 0.0
+ortho           | Error: 4.468e+00 ± 1.3e-01 | Time: 5.400 ± 0.070s | Rank: 4096.0 ± 0.0
