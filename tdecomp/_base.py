@@ -30,7 +30,6 @@ class Decomposer(ABC):
         self.random_init = random_init
         self.rank = rank
 
-
     def decompose(self, W: torch.Tensor, rank=None, *args, **kwargs):
         if rank is None:
             rank = self.estimate_stable_rank(W)
