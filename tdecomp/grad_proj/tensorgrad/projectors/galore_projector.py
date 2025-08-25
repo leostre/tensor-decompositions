@@ -50,7 +50,6 @@ class GaLoreProjector:
         self._recon_buffer.zero_()
         torch.matmul(low_rank_grad, self.ortho_matrix, out=self._recon_buffer)
         return self._recon_buffer * self.scale
-    
 
     def _project_back_left(self, low_rank_grad):
         if self._recon_buffer is None:

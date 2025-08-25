@@ -14,8 +14,6 @@ class GaLoreSparseProjector:
     and 'proj_type' logic as GaLoreProjector.
 
     proj_type can be:
-        - 'std'          (select columns if #rows>=#cols else rows)
-        - 'reverse_std'  (opposite of std)
         - 'right'        (always columns)
         - 'left'         (always rows)
         - 'full'         (rows AND columns)

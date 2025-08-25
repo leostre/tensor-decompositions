@@ -1,12 +1,8 @@
-import torch
-# from neuralop.training import AdamW as DefaultComplexAdam
-from torch_optimizer import Lamb
-from torch.optim import SGD
+import math 
 
-from tdecomp.tensorgrad.adamw import AdamW
-from tdecomp.tensorgrad.tensorgrad import TensorGRaD
-from tdecomp.tensorgrad.training_utils import get_scheduler
-from tdecomp.tensorgrad.adam_full import AdamW as AdamWFull
+import torch
+
+from tdecomp.grad_proj.tensorgrad.tensorgrad import TensorGRaD
 
 
 SMALLNESS_THRESHOLD = 1000
@@ -40,7 +36,6 @@ def setup_optimizer_and_scheduler(config, model: torch.nn.Module, logging_name):
         registered = any(idp in group for group in ndim2id.values())
         if not registered:
             regular_parameters.append(p)
-    # return regular_parameters, ndim2group
 
     del ndim2id
 
@@ -101,14 +96,8 @@ def setup_optimizer_and_scheduler(config, model: torch.nn.Module, logging_name):
             'enforce_full_complex_precision': config.opt.enforce_full_complex_precision,
     }
 
-    if config.opt.optimizer_type in ["tensorgrad", "tensorgrad_sum"]:
-        optimizer_args['use_sum'] = (config.opt.optimizer_type == "tensorgrad_sum")
-        optimizer = TensorGRaD(param_groups, **optimizer_args)
-    else:
-        # add first_dim_rollup to optimizer_args
-        optimizer_args['first_dim_rollup'] = config.opt.first_dim_rollup
-        optimizer = AdamW(param_groups, **optimizer_args)
-
+    optimizer_args['use_sum'] = (config.opt.optimizer_type == "tensorgrad_sum")
+    optimizer = TensorGRaD(param_groups, **optimizer_args)
     
     # Set up scheduler for non-per-layer optimization
     scheduler = get_scheduler(
@@ -121,3 +110,49 @@ def setup_optimizer_and_scheduler(config, model: torch.nn.Module, logging_name):
     )
     
     return optimizer, scheduler
+
+
+def get_scheduler(scheduler_name: str,
+                  optimizer: torch.optim.Optimizer,
+                  gamma: float,
+                  patience: int,
+                  T_max: int,
+                  step_size: int,):
+    '''
+    Returns LR scheduler of choice from available options
+    '''
+    if scheduler_name == "ReduceLROnPlateau":
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            factor=gamma,
+            patience=patience,
+            mode="min",
+        )
+    elif scheduler_name == "CosineAnnealingLR":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=T_max
+        )
+    elif scheduler_name == "StepLR":
+        scheduler = torch.optim.lr_scheduler.StepLR(
+            optimizer, step_size=step_size, gamma=gamma
+        )
+    elif scheduler_name == "constant":
+        def constant_scheduler(step):
+            return 1.0
+        return constant_scheduler
+    elif scheduler_name == "step":
+        def step_scheduler(step):
+            return gamma ** (step // step_size)
+        return step_scheduler
+    elif scheduler_name == "exponential":
+        def exp_scheduler(step):
+            return gamma ** step
+        return exp_scheduler
+    elif scheduler_name == "cosine":
+        def cosine_scheduler(step):
+            return 0.5 * (1 + math.cos(math.pi * step / T_max))
+        return cosine_scheduler
+    else:
+        raise ValueError(f"Got scheduler={scheduler_name}")
+
+    return scheduler
