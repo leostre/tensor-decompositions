@@ -45,8 +45,8 @@ class RandomizedSVD(Decomposer):
         return max(1, min(tensor.size(-1), int(stable_rank * (1 / self.distortion_factor))))
     
     @_need_t
-    def _decompose_big(self, X, rank):
-        P = torch.randn(rank, X.size(-2))
+    def _decompose_big(self, X: torch.Tensor, rank):
+        P = torch.randn(rank, X.size(-2), device=X.device, dtype=X.dtype)
         G = P @ X @ (X.T @ P.T)
         Q, _ = torch.linalg.qr(
             (torch.pow(G, self.power) @ (P @ X)).T,
@@ -56,9 +56,9 @@ class RandomizedSVD(Decomposer):
         return U, S, Vh @ Q.T
         
     @_need_t
-    def _decompose(self, X, rank):
+    def _decompose(self, X: torch.Tensor, rank):
         G = X @ X.T
-        P = torch.randn(X.size(1), rank)
+        P = torch.randn(X.size(1), rank, device=X.device, dtype=X.dtype)
         Q, _ = torch.linalg.qr(torch.pow(G, self.power) @ X @ P, mode='reduced')
         B = Q.T @ X
         U, S, Vh = torch.linalg.svd(B, full_matrices=False)
@@ -72,7 +72,7 @@ class TwoSidedRandomSVD(RandomizedSVD):
     """
     def __init__(self, *, rank: int = None, distortion_factor: float = 0.6, 
                  random_init: str = 'normal', ):
-        Decomposer.__init__(self, rank=rank, distortion_factor=distortion_factor, random_init=random_init)
+        super().__init__(rank=rank, distortion_factor=distortion_factor, random_init=random_init)
         if random_init == 'lean_walsh' and rank is not None:
             if not (rank > 0 and (rank & (rank - 1) == 0)):
                 raise ValueError(f"For lean_walsh, rank must be power of 2, got {rank}")

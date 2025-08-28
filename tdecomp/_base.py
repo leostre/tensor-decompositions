@@ -30,7 +30,6 @@ class Decomposer(ABC):
         self.random_init = random_init
         self.rank = rank
 
-
     def decompose(self, W: torch.Tensor, rank=None, *args, **kwargs):
         if rank is None:
             rank = self.estimate_stable_rank(W)
@@ -54,8 +53,8 @@ class Decomposer(ABC):
     def estimate_stable_rank(self, W):
         n_samples = max(W.shape)
         eps = self.distortion_factor
-        min_num_samples = torch.ceil(4 * torch.log(n_samples) / (eps**2 / 2 - eps**3 / 3))
-        return min((round(max(min_num_samples)), *W.size(), 1))
+        min_num_samples = torch.ceil(4 * torch.log(torch.scalar_tensor(n_samples)) / (eps**2 / 2 - eps**3 / 3))
+        return min(torch.round(min_num_samples), *W.size(), 1)
     
     def get_approximation_error(self, W, *result_matrices):
         approx = reduce(torch.matmul, result_matrices)
