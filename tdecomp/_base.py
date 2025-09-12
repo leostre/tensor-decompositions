@@ -11,7 +11,7 @@ DIM_LIM = 2048
 def _need_t(f):
     """Performs matrix transposition for maximal projection effect"""
     @wraps(f)
-    def _wrapper(self, W: torch.Tensor, *args, **kwargs):
+    def _wrapper(self: Decomposer, W: torch.Tensor, *args, **kwargs):
             m, n = W.size(-2), W.size(-1)
             _is_transposed = m >= n
             weight = W.t() if _is_transposed else W
@@ -22,6 +22,30 @@ def _need_t(f):
             )
     return _wrapper
 
+def _conditioning(f):
+    """If conditioner is detected, apply W' = W @ C @ C^-1
+    then U, S, Vh = Decompostion(W @ C)
+    and Vh = Vh @ C^-1
+    """
+    @wraps(f)
+    def _conditioned(self: "Decomposer", W: torch.Tensor, rank=None, conditioner=None, *args, **kwargs):
+        if conditioner is None:
+            conditioner = self._conditioner
+        if conditioner is None:
+            return f(self, W, rank, *args, **kwargs)
+        if conditioner.ndim != 1:
+            operation = torch.matmul
+            inverse_operation = torch.linalg.pinv
+        else: 
+            operation = torch.mul
+            inverse_operation = lambda x: 1 / x  
+        W = operation(W, conditioner)
+        inverse = inverse_operation(conditioner)
+        *decomposition, Vh = f(self, W, rank, *args, **kwargs)
+        Vh = operation(Vh, inverse)
+        return *decomposition, Vh
+    return _conditioned
+
 class Decomposer(ABC):
     def __init__(self, rank: Union[int, float] = None, distortion_factor: float = 0.6, 
                  random_init: str = 'normal'):
@@ -29,7 +53,9 @@ class Decomposer(ABC):
         self.distortion_factor = distortion_factor
         self.random_init = random_init
         self.rank = rank
+        self._conditioner = None
 
+    @_conditioning
     def decompose(self, W: torch.Tensor, rank=None, *args, **kwargs):
         if rank is None:
             rank = self.estimate_stable_rank(W)
@@ -42,7 +68,17 @@ class Decomposer(ABC):
         
     def _is_big(self, W: torch.Tensor):
         return sum(W.size()) > DIM_SUM_LIM or any(d > DIM_LIM for d in W.size())
-
+    
+    def set_conditioner(self, conditioner):
+        self._conditioner = conditioner
+        self._conditioner_inverse = torch.linalg.pinv(conditioner)
+    
+    def _conditioning(self, X, conditioner=None) -> torch.Tensor:
+        conditioner = conditioner or self._conditioner
+        if conditioner is None:
+            return X
+        return X @ conditioner
+        
     @abstractmethod
     def _decompose(self, W, rank, *args, **kwargs):
         pass
