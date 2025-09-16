@@ -71,13 +71,6 @@ class Decomposer(ABC):
     
     def set_conditioner(self, conditioner):
         self._conditioner = conditioner
-        self._conditioner_inverse = torch.linalg.pinv(conditioner)
-    
-    def _conditioning(self, X, conditioner=None) -> torch.Tensor:
-        conditioner = conditioner or self._conditioner
-        if conditioner is None:
-            return X
-        return X @ conditioner
         
     @abstractmethod
     def _decompose(self, W, rank, *args, **kwargs):
