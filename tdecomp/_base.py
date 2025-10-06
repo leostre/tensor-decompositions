@@ -1,11 +1,13 @@
 import torch
 
-from functools import wraps, reduce, partial
+from functools import wraps, reduce, partial, partialmethod
 from typing import *
 from abc import ABC, abstractmethod
 
 from tensorly import set_backend
-from tensorly.tenalg import mode_dot, fold, unfold
+from tensorly.tenalg import mode_dot
+
+from tdecomp.matrix.random_projections import RANDOM_GENS
 
 set_backend('pytorch')
 
@@ -67,13 +69,15 @@ class Decomposer(ABC):
             rank = self.estimate_stable_rank(tensor)
         elif isinstance(rank, float):
             rank = max(1, int(rank * min(tensor.size())))
-        elif isinstance(rank, min(tensor.size())):
+        elif isinstance(rank, int):
             rank = min(rank, min(tensor.size()))
+        else:
+            raise TypeError(f'Expected types for `rank`: {repr(Number)}, got `{type(rank)}`')
         return rank                
 
     @_conditioning
     def decompose(self, tensor: torch.Tensor, rank: Number = None, *args, **kwargs):
-        rank = self._get_rank(tensor)
+        rank = self._get_rank(tensor, rank)
         if not self._is_big(tensor):
             return self._decompose(tensor, rank, *args, **kwargs)
         else:
@@ -99,29 +103,54 @@ class Decomposer(ABC):
         return max(min(torch.round(min_num_samples), *W.size()), 1)
     
     def get_approximation_error(self, tensor: torch.Tensor, *approximation, relative: bool = True):
+        eps = 1e-5
         approximation = self.compose(*approximation)
         error_mtr = tensor - approximation
         error_norm = torch.linalg.norm(error_mtr)
         if relative:
             initial_norm = torch.linalg.norm(tensor)
-            error_norm /= initial_norm
+            error_norm /= initial_norm + eps
         return error_norm
     
     def compose(self, *factors, **kwargs) -> torch.Tensor:
-        approx = reduce(torch.matmul, factors)
-        return approx
+        nfactors = len(factors)
+        if nfactors == 2:
+            return factors[0] @ factors[1]
+        elif nfactors == 3:
+            U, S, Vh = factors
+            return (U * S) @ Vh
+        else:
+            raise ValueError('Unknown type of decomposition!')
+
 
 class TensorDecomposer(Decomposer):
     def _get_rank(self, tensor: torch.Tensor, rank: Number) -> List[int]:
+        rank = rank or self.rank
         if rank is None:
-            rank = self.estimate_stable_rank(tensor)
+            rank = list(tensor.size())
+        elif isinstance(rank, int):
+            rank = [rank] * tensor.ndim
         elif isinstance(rank, float):
-            rank = max(1, int(rank * min(tensor.size())))
-        elif isinstance(rank, min(tensor.size())):
-            rank = min(rank, min(tensor.size()))
-        return rank            
+            assert 0 < rank <= 1, 'Float rank must lie in (0, 1]'
+            rank = int(rank * min(tensor.size()))
+            rank = [rank] * tensor.ndim
+        elif hasattr(rank, '__iter__'):
+            if len(rank) != tensor.ndim:
+                raise ValueError(f"Rank list length {len(rank)} must match tensor dimensions {tensor.dim()}")
+            ranks = [None] * tensor.ndim
+            for i in range(tensor.ndim):
+                if isinstance(rank[i], int):
+                    ranks[i] = rank[i]
+                elif isinstance(rank[i], float):
+                    ranks[i] = int(rank[i] * tensor.size(i))
+                else:
+                    raise ValueError('Unexpected value for rank!')
+            rank = ranks
+        else:
+            raise TypeError(f'Supprted formats are: int, float (0,1] and lists of them, got {type(rank)}')
+        return rank
 
-    def compose(self, core: torch.Tensor, factors: List[torch.Tensor]) -> torch.Tensor:
+    def compose(self, core: torch.Tensor, *factors: List[torch.Tensor]) -> torch.Tensor:
         for i, factor in enumerate(factors):
             core = mode_dot(core, factor, i)
         return core
