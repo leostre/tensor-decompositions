@@ -31,7 +31,7 @@ class RandomizedSVD(Decomposer):
     """
     https://arxiv.org/pdf/2404.09276
     """
-    _random_gens = _random_gens = RANDOM_GENS
+    _random_gens = RANDOM_GENS
 
     def __init__(self, rank=None, power: int = 3,
                  distortion_factor: float = 0.6, 
@@ -156,3 +156,10 @@ class CURDecomposition(Decomposer):
     def compose(self, *factors, **kwargs):
         C, U, R = factors
         return C @ U @ R
+
+
+__local_names = locals()
+
+DECOMPOSERS: Dict[str, Decomposer]= {
+    name: __local_names[name] for name in __all__
+}
