@@ -4,9 +4,15 @@ from functools import wraps, reduce, partial
 from typing import *
 from abc import ABC, abstractmethod
 
+from tensorly import set_backend
+from tensorly.tenalg import mode_dot, fold, unfold
+
+set_backend('pytorch')
+
+Number = Union[int, float]
 
 DIM_SUM_LIM = 1024
-DIM_LIM = 2048
+DIM_LIM = 1024
 
 def _need_t(f):
     """Performs matrix transposition for maximal projection effect"""
@@ -55,16 +61,23 @@ class Decomposer(ABC):
         self.rank = rank
         self._conditioner = None
 
-    @_conditioning
-    def decompose(self, W: torch.Tensor, rank=None, *args, **kwargs):
+    def _get_rank(self, tensor: torch.Tensor, rank: Number) -> int:
+        rank = rank or self.rank
         if rank is None:
-            rank = self.estimate_stable_rank(W)
+            rank = self.estimate_stable_rank(tensor)
         elif isinstance(rank, float):
-            rank = max(1, int(rank * min(W.size())))
-        if not self._is_big(W):
-            return self._decompose(W, rank, *args, **kwargs)
+            rank = max(1, int(rank * min(tensor.size())))
+        elif isinstance(rank, min(tensor.size())):
+            rank = min(rank, min(tensor.size()))
+        return rank                
+
+    @_conditioning
+    def decompose(self, tensor: torch.Tensor, rank: Number = None, *args, **kwargs):
+        rank = self._get_rank(tensor)
+        if not self._is_big(tensor):
+            return self._decompose(tensor, rank, *args, **kwargs)
         else:
-            return self._decompose_big(W, rank, *args, **kwargs)
+            return self._decompose_big(tensor, rank, *args, **kwargs)
         
     def _is_big(self, W: torch.Tensor):
         return sum(W.size()) > DIM_SUM_LIM or any(d > DIM_LIM for d in W.size())
@@ -83,18 +96,36 @@ class Decomposer(ABC):
         n_samples = max(W.shape)
         eps = self.distortion_factor
         min_num_samples = torch.ceil(4 * torch.log(torch.scalar_tensor(n_samples)) / (eps**2 / 2 - eps**3 / 3))
-        return min(torch.round(min_num_samples), *W.size(), 1)
+        return max(min(torch.round(min_num_samples), *W.size()), 1)
     
-    def get_approximation_error(self, W, *result_matrices):
-        approx = reduce(torch.matmul, result_matrices)
-        return torch.linalg.norm(W - approx)
+    def get_approximation_error(self, tensor: torch.Tensor, *approximation, relative: bool = True):
+        approximation = self.compose(*approximation)
+        error_mtr = tensor - approximation
+        error_norm = torch.linalg.norm(error_mtr)
+        if relative:
+            initial_norm = torch.linalg.norm(tensor)
+            error_norm /= initial_norm
+        return error_norm
     
     def compose(self, *factors, **kwargs) -> torch.Tensor:
-        nfactors = len(factors)
-        if nfactors == 2:
-            return factors[0] @ factors[1]
-        elif nfactors == 3:
-            U, S, Vh = factors
-            return (U * S) @ Vh
-        else:
-            raise ValueError('Unknown type of decomposition!')
+        approx = reduce(torch.matmul, factors)
+        return approx
+
+class TensorDecomposer(Decomposer):
+    def _get_rank(self, tensor: torch.Tensor, rank: Number) -> List[int]:
+        if rank is None:
+            rank = self.estimate_stable_rank(tensor)
+        elif isinstance(rank, float):
+            rank = max(1, int(rank * min(tensor.size())))
+        elif isinstance(rank, min(tensor.size())):
+            rank = min(rank, min(tensor.size()))
+        return rank            
+
+    def compose(self, core: torch.Tensor, factors: List[torch.Tensor]) -> torch.Tensor:
+        for i, factor in enumerate(factors):
+            core = mode_dot(core, factor, i)
+        return core
+    
+    def get_approximation_error(self, tensor, *approximation, relative = True):
+        core, factors = approximation
+        return super().get_approximation_error(tensor, core, *factors, relative=relative)
