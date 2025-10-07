@@ -1,5 +1,0 @@
-setup.py
-tdecomp.egg-info/PKG-INFO
-tdecomp.egg-info/SOURCES.txt
-tdecomp.egg-info/dependency_links.txt
-tdecomp.egg-info/top_level.txt

@@ -1,30 +1,33 @@
+from functools import partialmethod, reduce
 from typing import *
+
 import torch
 
 
 __all__ = [
-    'normal_gen',
-    'ortho_gen',
+    'normal',
+    'ortho',
     'random_subspace_projection_gen',
-    'sparse_iid_entries_gen',
-    'sparse_jl_matrix_gen',
-    'four_wise_independent_matrix_gen',
-    'lean_walsh_transform_gen',
-    'identity_copies_projection_gen'
+    'sparse_iid_entries',
+    'sparse_jl_matrix',
+    'four_wise_independent_matrix',
+    'lean_walsh',
+    'identity_copies',
+    'Projector'
 ]
 
 
-def normal_gen(x: int, y: int, device: str = 'cpu', dtype=torch.float32):
+def normal(x: int, y: int, device: str = 'cpu', dtype=torch.float32):
     return torch.randn(x, y, device=device, dtype=dtype)
 
 
-def ortho_gen(x: int, y: int, device: str = 'cpu', dtype=torch.float32):
+def ortho(x: int, y: int, device: str = 'cpu', dtype=torch.float32):
     P = torch.empty((x, y), device=device, dtype=dtype)
     torch.nn.init.orthogonal_(P)
     return P
 
 
-def sparse_iid_entries_gen(d, k, s=3, device: str = 'cpu', dtype=torch.float32):
+def sparse_iid_entries(d, k, s=3, device: str = 'cpu', dtype=torch.float32):
     """
     Генерирует разреженную проекционную матрицу с элементами {-1, 0, +1} 
     
@@ -40,7 +43,7 @@ def sparse_iid_entries_gen(d, k, s=3, device: str = 'cpu', dtype=torch.float32):
     return R * torch.sqrt(torch.tensor(s, dtype=torch.float32))  
 
 
-def sparse_jl_matrix_gen(d, k, s=3, device: str = 'cpu', dtype=torch.float32):
+def sparse_jl_matrix(d, k, s=3, device: str = 'cpu', dtype=torch.float32):
     """
     Генерирует разреженную случайную матрицу проекций с элементами {+1, 0, -1},
     удовлетворяющую Johnson-Lindenstrauss Lemma (JLL) с параметром разреженности s.
@@ -67,7 +70,7 @@ def sparse_jl_matrix_gen(d, k, s=3, device: str = 'cpu', dtype=torch.float32):
     return R
 
 
-def four_wise_independent_matrix_gen(d: int, k: int, 
+def four_wise_independent_matrix(d: int, k: int, 
                                  device: str = "cpu",
                                  dtype: torch.dtype = torch.float32) -> torch.Tensor:
     """
@@ -93,7 +96,7 @@ def four_wise_independent_matrix_gen(d: int, k: int,
     return Phi.T 
 
 
-def lean_walsh_transform_gen(
+def lean_walsh(
     d: int, 
     k: int, 
     device: str = "cpu",
@@ -142,7 +145,7 @@ def lean_walsh_transform_gen(
 
     return torch.matmul(D, H)
 
-def identity_copies_projection_gen(
+def identity_copies(
     d: int, 
     k: int, 
     device: str = "cpu",
@@ -175,12 +178,33 @@ def identity_copies_projection_gen(
     return R
 
 
+class Projector:
+    def __init__(self, mode: str):
+        self.P = None
+        self.mode = mode
+
+    def generate_P(self, d: int, k: int, **generator_kws) -> torch.Tensor:
+        P = RANDOM_GENS[self.mode](d, k, **generator_kws)
+        return P
+    
+    def project(self, tensor: torch.Tensor, proj_dim: int, *, side: Literal['left', 'right'], renew: bool = True, **gen_kws):
+        d = tensor.size(0 if side == 'left' else -1)
+        if self.P is None:
+            self.P = self.generate_P(d, proj_dim, device=tensor.device, **gen_kws)
+        matrices = [self.P, tensor]
+        if renew:
+            self.P = self.generate_P(d, proj_dim,  device=tensor.device, **gen_kws)
+        if side == 'right':
+            self.P = self.P
+            matrices = reversed(matrices)
+        projected = reduce(torch.matmul, matrices)
+        return projected
+    
+    lproject = partialmethod(project, side='left')
+    rproject = partialmethod(project, side='right')
+
+
+__locals = locals()
 RANDOM_GENS = {
-        'normal': normal_gen,
-        'ortho' : ortho_gen,
-        'iid_entries': sparse_iid_entries_gen,
-        'sparse_unit_entries': sparse_jl_matrix_gen,
-        'four_wise': four_wise_independent_matrix_gen,
-        'lean_walsh': lean_walsh_transform_gen,
-        'identity_copies': identity_copies_projection_gen
-    }
+    name: func for name, func in __locals.items() if not name in ('Projector',)
+}

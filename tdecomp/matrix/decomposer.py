@@ -31,7 +31,7 @@ class RandomizedSVD(Decomposer):
     """
     https://arxiv.org/pdf/2404.09276
     """
-    _random_gens = _random_gens = RANDOM_GENS
+    _random_gens = RANDOM_GENS
 
     def __init__(self, rank=None, power: int = 3,
                  distortion_factor: float = 0.6, 
@@ -46,7 +46,7 @@ class RandomizedSVD(Decomposer):
     
     @_need_t
     def _decompose_big(self, X: torch.Tensor, rank):
-        P = torch.randn(rank, X.size(-2), device=X.device, dtype=X.dtype)
+        P = self._random_gens[self.random_init](rank, X.size(-2), device=X.device, dtype=X.dtype)
         G = P @ X @ (X.T @ P.T)
         Q, _ = torch.linalg.qr(
             (torch.pow(G, self.power) @ (P @ X)).T,
@@ -58,7 +58,7 @@ class RandomizedSVD(Decomposer):
     @_need_t
     def _decompose(self, X: torch.Tensor, rank):
         G = X @ X.T
-        P = torch.randn(X.size(1), rank, device=X.device, dtype=X.dtype)
+        P = self._random_gens[self.random_init](rank, X.size(-2), device=X.device, dtype=X.dtype)
         Q, _ = torch.linalg.qr(torch.pow(G, self.power) @ X @ P, mode='reduced')
         B = Q.T @ X
         U, S, Vh = torch.linalg.svd(B, full_matrices=False)
@@ -81,8 +81,8 @@ class TwoSidedRandomSVD(RandomizedSVD):
     def _decompose(self, X: torch.Tensor, rank: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         I, J = X.shape[-2], X.shape[-1]
         random_gen = self._random_gens[self.random_init]
-        Omega1 = random_gen(J, rank).to(X.device, X.dtype)
-        Omega2 = random_gen(I, rank).to(X.device, X.dtype)
+        Omega1 = random_gen(J, rank, device=X.device, dtype=X.dtype)
+        Omega2 = random_gen(I, rank, device=X.device, dtype=X.dtype)
             
         Y1 = X @ Omega1
         Y2 = X.T @ Omega2
@@ -118,7 +118,7 @@ class CURDecomposition(Decomposer):
 
     """
     def _decompose(self, X: torch.Tensor, rank: int = None):
-        rank = rank or self.rank or self.estimate_stable_rank(X)
+        rank = self._get_rank(X, rank)
         # create sub matrices for CUR-decompostion
         c, w, r = self.select_rows_cols(X, rank)
         # evaluate pseudoinverse for W - U^-1
@@ -156,3 +156,10 @@ class CURDecomposition(Decomposer):
     def compose(self, *factors, **kwargs):
         C, U, R = factors
         return C @ U @ R
+
+
+__local_names = locals()
+
+DECOMPOSERS: Dict[str, Decomposer]= {
+    name: __local_names[name] for name in __all__
+}
