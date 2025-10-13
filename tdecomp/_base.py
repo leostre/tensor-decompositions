@@ -11,6 +11,12 @@ from tdecomp.matrix.random_projections import RANDOM_GENS
 
 set_backend('pytorch')
 
+__all__ = [
+    'Number',
+    'Decomposer',
+    'TensorDecomposer'
+]
+
 Number = Union[int, float]
 
 DIM_SUM_LIM = 1024
