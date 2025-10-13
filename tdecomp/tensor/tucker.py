@@ -125,7 +125,7 @@ class RSTHOSVDDecomposition(TensorDecomposer):
             ort = unfold(tensor, mode_idx)
             U, *_= self.rsvd.decompose(ort)
             factor_matrices.append(U)
-            core_tensor = mode_dot(core_tensor, U, mode_idx)
+            core_tensor = mode_dot(core_tensor, U.T, mode_idx)
         
         return core_tensor, factor_matrices
 
