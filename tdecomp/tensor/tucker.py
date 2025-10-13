@@ -153,6 +153,13 @@ class RSTDecomposition(TensorDecomposer):
                  distortion_factor: float = 0.6,
                  random_init: str = 'normal'):
         super().__init__(random_init=random_init, rank=rank, distortion_factor=distortion_factor)
+        self.rsvd = RandomizedSVD(
+            None, distortion_factor=distortion_factor, random_init=random_init
+        )
+
+    def _sample(self, tensor, n):
+        return tensor[..., torch.randperm(tensor.shape[-1])[:n]]
+        
     
     def _decompose(self, tensor: torch.Tensor, rank: List[int]) -> tuple:
         """
@@ -173,11 +180,11 @@ class RSTDecomposition(TensorDecomposer):
         # Step 1: For each mode n = 1, 2, ..., N
         for mode_idx in range(tensor.dim()):
             ort = unfold(tensor, mode_idx)
-            indices = torch.randperm(ort.shape[-1])
-            new_tensor = ort[:, indices].T
-            factor_matrices.append(new_tensor)
-            new_tensor = torch.linalg.pinv(new_tensor)
-            core_tensor = mode_dot(core_tensor, new_tensor, mode_idx)
+            Q = self._sample(ort, n=rank[mode_idx])
+            factor_matrices.append(Q)
+            U, S, Vh = self.rsvd.decompose(Q)
+            Q_inv = self.rsvd.compose(Vh.T, 1 / S, U.T)
+            core_tensor = mode_dot(core_tensor, Q_inv, mode_idx)
         
         return core_tensor, factor_matrices
     
