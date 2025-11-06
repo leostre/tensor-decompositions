@@ -32,6 +32,6 @@ Homepage = "https://github.com/leostre/tensor-decompositions.git"
 # packages = ["tdecomp", "experiments"]
 
 # Alternative: use find to automatically discover packages
-[tool.setuptools]
+[tool.setuptools.packages.find]
 include = ["tdecomp*"]  # Include tdecomp and all subpackages
 exclude = ["tests*", "experiments*"]  # Exclude test/experiment packages
