@@ -76,7 +76,7 @@ class Decomposer(ABC):
         elif isinstance(rank, float):
             rank = max(1, int(rank * min(tensor.size())))
         elif isinstance(rank, int):
-            rank = min(rank, min(tensor.size()))
+            rank = max(1, min(rank, min(tensor.size())))
         else:
             raise TypeError(f'Expected types for `rank`: {repr(Number)}, got `{type(rank)}`')
         return rank                
