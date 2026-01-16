@@ -58,7 +58,7 @@ class RandomizedSVD(Decomposer):
     @_need_t
     def _decompose(self, X: torch.Tensor, rank):
         G = X @ X.T
-        P = self._random_gens[self.random_init](rank, X.size(-2), device=X.device, dtype=X.dtype)
+        P = self._random_gens[self.random_init](X.size(-1), rank, device=X.device, dtype=X.dtype)
         Q, _ = torch.linalg.qr(torch.pow(G, self.power) @ X @ P, mode='reduced')
         B = Q.T @ X
         U, S, Vh = torch.linalg.svd(B, full_matrices=False)
