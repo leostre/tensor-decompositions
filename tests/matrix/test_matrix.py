@@ -16,3 +16,6 @@ def test_decomposer_relative_error(name):
     dec_result = decomposer.decompose(X, 100)
     error = decomposer.get_approximation_error(X, *dec_result, relative=True)
     assert error < RTOL, f'{name} returns approximation violating rtol: error = {error} & relative tolerance = {RTOL}'
+
+
+    
