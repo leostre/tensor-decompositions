@@ -4,6 +4,12 @@ import torch
 
 from torch.ao.quantization.utils import _normalize_kwargs
 
+__all__ = [
+    'filter_kw_universal',
+    'conjugate_gradient',
+    'svd_solver_tikhonov'
+]
+
 def filter_kw_universal(f):
     """Automatically switches between fedot-style and conventional init"""
     @wraps(f)
@@ -108,6 +114,3 @@ def svd_solver_tikhonov(A: torch.Tensor, b: torch.Tensor, svd_func=None, tol=1e-
             break 
         lmbd *= lmbd_decay
     return x
-    
-
-

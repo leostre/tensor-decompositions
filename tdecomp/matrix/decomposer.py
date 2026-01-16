@@ -70,7 +70,7 @@ class TwoSidedRandomSVD(RandomizedSVD):
     Randomized Two-Sided SVD with explicit rank parameter support
     https://scispace.com/pdf/randomized-algorithms-for-computation-of-tucker-1stsnpusvv.pdf
     """
-    def __init__(self, *, rank: int = None, distortion_factor: float = 0.6, 
+    def __init__(self, rank: int = None, distortion_factor: float = 0.6, 
                  random_init: str = 'normal', ):
         super().__init__(rank=rank, distortion_factor=distortion_factor, random_init=random_init)
         if random_init == 'lean_walsh' and rank is not None:
