@@ -2,9 +2,10 @@ import torch
 
 from typing import *
 
-from tdecomp._base import Decomposer, _need_t
-from tdecomp.matrix.random_projections import RANDOM_GENS
+from tdecomp._base import TensorLike, Decomposer, Number, _need_t
+from tdecomp.matrix.random_projections import PROJECTOR_GENS
 from tdecomp.matrix.importance_generators import IMPORTANCE_GENS
+import tensorly as tl
 
 __all__ = [
     'SVDDecomposition',
@@ -13,57 +14,54 @@ __all__ = [
     'CURDecomposition'
 ]
 
-
 class SVDDecomposition(Decomposer):
-    def _decompose(self, W: torch.Tensor, rank) -> tuple:
-        """Block Krylov subspace method for computing the SVD of a matrix with a low computational cost.
+    def _decompose(self, W: TensorLike, rank) -> tuple[TensorLike, ...]:
+        """Standart SVD decomposition, realization depends on various backends.  
+        Result is non-determenistic, sign of U and V can change in columns together.
 
         Args:
             W: matrix to decompose
         Returns:
-            u, s, vt: decomposition
-
+            U, S, Vt: decomposition
         """
-        # Return classic svd decomposition
-        return torch.linalg.svd(W, full_matrices=False)
+        return tl.truncated_svd(W, n_eigenvecs=min(tl.shape(W)))
 
 
 class RandomizedSVD(Decomposer):
     """
     https://arxiv.org/pdf/2404.09276
     """
-    _random_gens = RANDOM_GENS
 
-    def __init__(self, rank=None, power: int = 3,
+    def __init__(self, rank: Optional[Number] = None, power: int = 3,
                  distortion_factor: float = 0.6, 
-                 random_init: str = 'normal'):
-        super().__init__(rank, distortion_factor, random_init)
+                 projector_init = PROJECTOR_GENS.normal):
+        super().__init__(rank, distortion_factor, projector_init)
         self.power = power
 
-    def estimate_stable_rank(self, tensor: torch.Tensor) -> int:
-        svals = torch.linalg.svdvals(tensor)
-        stable_rank = (svals.sum() / svals.max())**2
-        return max(1, min(tensor.size(-1), int(stable_rank * (1 / self.distortion_factor))))
+    def estimate_stable_rank(self, W: TensorLike) -> int:
+        svals_squared = tl.truncated_svd(W, n_eigenvecs=min(tl.shape(W)))[1] ** 2 #NOTE вычисляется полный SVD - нет смысла в этом, если вдруг не передадим rank в decompose()
+        stable_rank = (tl.sum(svals_squared) / tl.max(svals_squared))
+        return max(1, min(min(tl.shape(W)), int(stable_rank * (1 / self.distortion_factor))))
     
     @_need_t
-    def _decompose_big(self, X: torch.Tensor, rank):
-        P = self._random_gens[self.random_init](rank, X.size(-2), device=X.device, dtype=X.dtype)
-        G = P @ X @ (X.T @ P.T)
-        Q, _ = torch.linalg.qr(
-            (torch.pow(G, self.power) @ (P @ X)).T,
+    def _decompose_big(self, X: TensorLike, rank: int) -> tuple[TensorLike, ...]:
+        P = self.projector_init.value(rank, tl.shape(X)[-2], tl.context(X))
+        G = tl.matmul(P, tl.matmul(X, tl.matmul(tl.transpose(X), tl.transpose(P))))
+        Q, _ = tl.qr(
+            tl.transpose(tl.matmul(G ** self.power, tl.matmul(P, X))),
             mode='reduced')
-        B = X @ Q
-        U, S, Vh = torch.linalg.svd(B, full_matrices=False)
-        return U, S, Vh @ Q.T
+        B = tl.matmul(X, Q)
+        U, S, Vh = tl.truncated_svd(B, n_eigenvecs=min(tl.shape(B)))
+        return U, S, tl.matmul(Vh, tl.transpose(Q))
         
     @_need_t
-    def _decompose(self, X: torch.Tensor, rank):
-        G = X @ X.T
-        P = self._random_gens[self.random_init](X.size(-1), rank, device=X.device, dtype=X.dtype)
-        Q, _ = torch.linalg.qr(torch.pow(G, self.power) @ X @ P, mode='reduced')
-        B = Q.T @ X
-        U, S, Vh = torch.linalg.svd(B, full_matrices=False)
-        return Q @ U, S, Vh
+    def _decompose(self, X: TensorLike, rank: int) -> tuple[TensorLike, ...]:
+        G = tl.matmul(X, tl.transpose(X))
+        P = self.projector_init.value(tl.shape(X)[-1], rank, device=X.device, dtype=X.dtype)
+        Q, _ = tl.qr(tl.matmul(G ** self.power, tl.matmul(X, P)), mode='reduced')
+        B = tl.matmul(tl.transpose(Q), X)
+        U, S, Vh = tl.truncated_svd(B, n_eigenvecs=min(tl.shape(B)))
+        return tl.matmul(Q, U), S, Vh
 
 
 class TwoSidedRandomSVD(RandomizedSVD):

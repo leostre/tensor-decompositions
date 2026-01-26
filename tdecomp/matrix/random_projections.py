@@ -1,13 +1,18 @@
-from functools import partialmethod, reduce
+import copy
+from enum import Enum
+from functools import partial, partialmethod, reduce
+import math
 from typing import *
+import tensorly as tl
 
 import torch
+
+from tdecomp._base import TensorLike
 
 
 __all__ = [
     'normal',
     'ortho',
-    'random_subspace_projection_gen',
     'sparse_iid_entries',
     'sparse_jl_matrix',
     'four_wise_independent_matrix',
@@ -17,17 +22,29 @@ __all__ = [
 ]
 
 
-def normal(x: int, y: int, device: str = 'cpu', dtype=torch.float32):
-    return torch.randn(x, y, device=device, dtype=dtype)
+_default_context = {"device": "cpu", "dtype": tl.float32}
+"""Default tensor context for creation"""
+
+def normal(rows: int, cols: int, context: dict = _default_context) -> TensorLike:
+    return tl.randn((rows, cols), **context)
 
 
-def ortho(x: int, y: int, device: str = 'cpu', dtype=torch.float32):
-    P = torch.empty((x, y), device=device, dtype=dtype)
-    torch.nn.init.orthogonal_(P)
-    return P
+def ortho(rows: int, cols: int, context: dict = _default_context) -> TensorLike:
+    P = normal(rows, cols, context)
+    if (rows < cols):
+        P = tl.transpose(P)
+
+    q, r = tl.qr(P, mode="reduced")
+    # Make Q uniform according to https://arxiv.org/pdf/math-ph/0609050.pdf
+    ph = tl.sign(tl.diag(r))
+    q = tl.einsum("ij,j->ij", q, ph)
+
+    if (rows < cols):
+        q = tl.transpose(q)
+    return q
 
 
-def sparse_iid_entries(d, k, s=3, device: str = 'cpu', dtype=torch.float32):
+def sparse_iid_entries(d: int, k: int, s: int = 3, context: dict = _default_context) -> TensorLike:
     """
     Генерирует разреженную проекционную матрицу с элементами {-1, 0, +1} 
     
@@ -38,12 +55,12 @@ def sparse_iid_entries(d, k, s=3, device: str = 'cpu', dtype=torch.float32):
     
     http://www.yaroslavvb.com/papers/achlioptas-database.pdf
     """
-    R = torch.randint(0, 2*s, size=(d, k), device=device, dtype=dtype)  
-    R = (R == 0).to(torch.int) - (R == 1).to(torch.int) 
-    return R * torch.sqrt(torch.tensor(s, dtype=torch.float32))  
+    R = tl.random.random_tensor((d, k), **context) * 2 * s // 1 #floor to int
+    R = (R == 0) * 1 - (R == 1) * 1 #cast to int
+    return R * math.sqrt(s) 
 
 
-def sparse_jl_matrix(d, k, s=3, device: str = 'cpu', dtype=torch.float32):
+def sparse_jl_matrix(d: int, k: int, s: int = 3, context: dict = _default_context):
     """
     Генерирует разреженную случайную матрицу проекций с элементами {+1, 0, -1},
     удовлетворяющую Johnson-Lindenstrauss Lemma (JLL) с параметром разреженности s.
@@ -55,17 +72,24 @@ def sparse_jl_matrix(d, k, s=3, device: str = 'cpu', dtype=torch.float32):
         k (int): Целевая размерность
         s (int): Параметр разреженности (обычно 1, 2 или 3)
     """
-    nnz_indices = torch.randint(0, d, (k, s), device=device, dtype=dtype)
+    cols = tl.tensor([0] * (k * s))
+    int_dtype = cols.dtype
+
+    nnz_indices = tl.tensor(tl.random.random_tensor((k, s), **context) * d, dtype=int_dtype)
     
-    values = (torch.randint(0, 2, (k, s), device=device, dtype=dtype) * 2 - 1).float()
+    values = tl.random.random_tensor((k, s), **context) * 4 // 1 - 1
     
-    values *= torch.sqrt(1 / s)
+    values *= math.sqrt(1 / s)
     
-    rows = nnz_indices.reshape(-1)
-    cols = torch.repeat_interleave(torch.arange(k), s)
+    rows = tl.reshape(nnz_indices, (-1,)) # "," here is important!
+
+    #cols = torch.repeat_interleave(tl.arange(k), s) - analogue
+    for i in range(1, k):
+        for j in range(s):
+            tl.index_update(cols, tl.index[s * i + j], i)
     
-    R = torch.zeros(d, k)
-    R[rows, cols] = values.reshape(-1)
+    R = tl.zeros((d, k))
+    tl.index_update(R, tl.index[rows, cols], tl.reshape(values, (-1,)))
     
     return R
 
@@ -190,8 +214,8 @@ class Projector:
     def project(self, tensor: torch.Tensor, proj_dim: int, *, side: Literal['left', 'right'], renew: bool = True, **gen_kws):
         d = tensor.size(0 if side == 'left' else -1)
         if self.P is None:
-            self.P = self.generate_P(d, proj_dim, device=tensor.device, **gen_kws)
-        matrices = [self.P, tensor]
+            self.P = self.generate_P(proj_dim, d , device=tensor.device, **gen_kws)
+        matrices = [self.P, tensor] #TODO fix
         if renew:
             self.P = self.generate_P(d, proj_dim,  device=tensor.device, **gen_kws)
         if side == 'right':
@@ -204,7 +228,11 @@ class Projector:
     rproject = partialmethod(project, side='right')
 
 
-__locals = locals()
-RANDOM_GENS = {
-    name: func for name, func in __locals.items() if not name in ('Projector',)
-}
+class PROJECTOR_GENS(Enum):
+    normal: Callable[[int, int], TensorLike] = partial(normal)
+    ortho = partial(ortho)
+    sparse_iid_entries = partial(sparse_iid_entries)
+    sparse_jl_matrix = partial(sparse_jl_matrix)
+    four_wise_independent_matrix = partial(four_wise_independent_matrix)
+    lean_walsh = partial(lean_walsh)
+    identity_copies = partial(identity_copies)

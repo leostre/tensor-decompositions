@@ -1,17 +1,16 @@
 import math
 from typing import Any, List, Optional, Union
 
-from functools import wraps
-from abc import ABC, abstractmethod
-
 import tensorly as tl
-
 tl.set_backend('pytorch') #TODO think about place of it
 type TensorLike = Any
 '''Tensorly supports work with different tensor backends (numpy, torch.tensor and so on), 
 but it doesnt describe abstract class for it. 
-So the tensor can be of `Any` type depending on backend setted in `<tl.set_backend>` .'''
+So the tensor can be of `Any` type depending on backend setted in `tl.set_backend` .'''
 
+from functools import wraps
+from abc import ABC, abstractmethod
+from tdecomp.matrix.random_projections import PROJECTOR_GENS
 
 __all__ = [
     'Number',
@@ -69,10 +68,10 @@ def _conditioning(f):
 
 class Decomposer(ABC):
     def __init__(self, rank: Optional[Number] = None, distortion_factor: float = 0.6, 
-                 random_init: str = 'normal'):
+                 projector_init = PROJECTOR_GENS.normal):
         assert 0 < distortion_factor <= 1, 'distortion_factor must be in (0, 1]'
         self.distortion_factor = distortion_factor
-        self.random_init = random_init
+        self.projector_init = projector_init
         self.rank = rank
         self._conditioner = None
 
@@ -103,10 +102,10 @@ class Decomposer(ABC):
         self._conditioner = conditioner
         
     @abstractmethod
-    def _decompose(self, W: TensorLike, rank: Optional[int], *args, **kwargs) -> tuple[TensorLike, ...]:
+    def _decompose(self, W: TensorLike, rank: int, *args, **kwargs) -> tuple[TensorLike, ...]:
         pass
     
-    def _decompose_big(self, W: TensorLike, rank: Optional[int], *args, **kwargs) -> tuple[TensorLike, ...]:
+    def _decompose_big(self, W: TensorLike, rank: int, *args, **kwargs) -> tuple[TensorLike, ...]:
         return self._decompose(W, rank, *args, **kwargs)
     
     def estimate_stable_rank(self, W: TensorLike):
