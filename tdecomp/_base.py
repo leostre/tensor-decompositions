@@ -27,7 +27,7 @@ def _need_t(f):
     """Performs matrix transposition for maximal projection effect  
     Supports only 2D tensors!"""
     @wraps(f)
-    def _wrapper(self: Decomposer, W: TensorLike, *args, **kwargs) -> tuple[TensorLike, ...]:
+    def _wrapper(self: Decomposer, W: TensorLike, *args, **kwargs) -> tuple[TensorLike, TensorLike, TensorLike]:
         m, n = tl.shape(W)[-2], tl.shape(W)[-1]
         _is_transposed = m >= n
         weight = tl.transpose(W) if _is_transposed else W
@@ -46,7 +46,7 @@ def _conditioning(f):
     C could be 1D or 2D
     """
     @wraps(f)
-    def _conditioned(self: "Decomposer", W: TensorLike, rank=None, conditioner=None, *args, **kwargs) -> tuple[TensorLike, ...]:
+    def _conditioned(self: "Decomposer", W: TensorLike, rank=None, conditioner=None, *args, **kwargs) -> tuple[TensorLike, TensorLike, TensorLike]:
         if conditioner is None:
             conditioner = self._conditioner
         if conditioner is None:
@@ -88,7 +88,7 @@ class Decomposer(ABC):
         return rank
 
     @_conditioning
-    def decompose(self, tensor: TensorLike, rank: Optional[Number] = None, *args, **kwargs) -> tuple[TensorLike, ...]:
+    def decompose(self, tensor: TensorLike, rank: Optional[Number] = None, *args, **kwargs) -> tuple[TensorLike, TensorLike, TensorLike]:
         rank = self._get_rank(tensor, rank)
         if not self._is_big(tensor):
             return self._decompose(tensor, rank, *args, **kwargs)
@@ -102,10 +102,10 @@ class Decomposer(ABC):
         self._conditioner = conditioner
         
     @abstractmethod
-    def _decompose(self, W: TensorLike, rank: int, *args, **kwargs) -> tuple[TensorLike, ...]:
+    def _decompose(self, W: TensorLike, rank: int, *args, **kwargs) -> tuple[TensorLike, TensorLike, TensorLike]:
         pass
     
-    def _decompose_big(self, W: TensorLike, rank: int, *args, **kwargs) -> tuple[TensorLike, ...]:
+    def _decompose_big(self, W: TensorLike, rank: int, *args, **kwargs) -> tuple[TensorLike, TensorLike, TensorLike]:
         return self._decompose(W, rank, *args, **kwargs)
     
     def estimate_stable_rank(self, W: TensorLike):
