@@ -4,6 +4,7 @@ from typing import *
 
 from tdecomp._base import Decomposer, _need_t
 from tdecomp.matrix.random_projections import RANDOM_GENS
+from tdecomp.matrix.importance_generators import IMPORTANCE_GENS
 
 __all__ = [
     'SVDDecomposition',
@@ -117,6 +118,11 @@ class CURDecomposition(Decomposer):
             return_samples: whether to return the samples or the decomposition matrices
 
     """
+
+    _importance_gens = IMPORTANCE_GENS
+    def __init__(self, rank=None, distortion_factor: float = 0.6, random_init: str = 'l2_norm'):
+        super().__init__(random_init=random_init, rank=rank, distortion_factor=distortion_factor)
+        
     def _decompose(self, X: torch.Tensor, rank: int = None):
         rank = self._get_rank(X, rank)
         # create sub matrices for CUR-decompostion
@@ -126,23 +132,20 @@ class CURDecomposition(Decomposer):
         # aprox U using pseudoinverse
         return (c, u, r)
 
-    def _importance(self, X, p):
+    def _importance(self, X):
         ax = 0
-        X_scaled = (X - torch.min(X, dim=ax).values) / (torch.max(X, dim=ax).values - torch.min(X, dim=ax).values)
-        torch.nan_to_num_(X_scaled, 0) 
-        col_norms = torch.linalg.norm(X_scaled, ord=p, axis=0)
-        row_norms = torch.linalg.norm(X_scaled, ord=p, axis=1)
-        matrix_norm = torch.linalg.norm(X_scaled, 'fro')  # np.sum(np.power(matrix, 2))
-        # Compute the probabilities for selecting columns and rows
-        col_probs, row_probs = col_norms / matrix_norm, row_norms / matrix_norm
-        return col_probs, row_probs
 
-    def select_rows_cols(
-            self, X: torch.Tensor,
-            rank: int,
-            p=2) -> Tuple[torch.Tensor]:
+        # X_scaled = (X - torch.min(X, dim=ax).values) / (torch.max(X, dim=ax).values - torch.min(X, dim=ax).values)
+        # torch.nan_to_num_(X_scaled, 0) 
+        # col_probs, row_probs = self._importance_gens[self.random_init](X_scaled)
+
+        col_probs, row_probs = self._importance_gens[self.random_init](X)
+        return col_probs, row_probs
+    
+
+    def select_rows_cols(self, X: torch.Tensor, rank: int) -> Tuple[torch.Tensor]:
         # Evaluate norms for columns and rows
-        col_probs, row_probs = self._importance(X, p)
+        col_probs, row_probs = self._importance(X)
 
         column_indices = torch.sort(torch.argsort(col_probs, descending=True)[:rank]).values
         row_indices = torch.sort(torch.argsort(row_probs, descending=True)[:rank]).values
@@ -156,7 +159,6 @@ class CURDecomposition(Decomposer):
     def compose(self, *factors, **kwargs):
         C, U, R = factors
         return C @ U @ R
-
 
 __local_names = locals()
 
