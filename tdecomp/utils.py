@@ -1,4 +1,5 @@
 from functools import partial, wraps
+from typing import Callable, Optional
 
 import torch
 import tensorly as tl
@@ -96,7 +97,7 @@ def conjugate_gradient(A, b, precond=None, x0=None,
     return x, residuals
 
 
-def svd_solver_tikhonov(A: torch.Tensor, b: torch.Tensor, svd_func=None, tol=1e-6, maxiter=20):
+def svd_solver_tikhonov(A: TensorLike, b: TensorLike, svd_func: Optional[Callable]=None, tol=1e-6, maxiter=20) -> TensorLike:
     """
     Solve Ax = b
         A is (m x n)
@@ -104,16 +105,17 @@ def svd_solver_tikhonov(A: torch.Tensor, b: torch.Tensor, svd_func=None, tol=1e-
     Assume m >= n
     """
     if svd_func is None:
-        svd_func = partial(torch.linalg.svd, full_matrices=False)
+        svd_func = partial(tl.truncated_svd, n_eigenvecs=min(tl.shape(A)))
     lmbd = 1e-4 
     lmbd_decay = 0.8
     U, S, Vh = svd_func(A)
-    Utb = U.T @ b
-    S2 = torch.square(S)
+    Utb = tl.matmul(tl.transpose(U), b)
+    S2 = S * S
+    x = tl.zeros(tl.shape(A)[1])
     for _ in range(maxiter):
         Sinv = S / (S2 + lmbd**2)  # Wiener filter
-        x = Vh.T @ (Sinv * Utb)
-        if torch.norm(A @ x - b) < tol:
+        x = tl.matmul(tl.transpose(Vh), (Sinv * Utb))
+        if tl.norm(tl.matmul(A, x) - b, order=2) < tol:
             break 
         lmbd *= lmbd_decay
     return x
