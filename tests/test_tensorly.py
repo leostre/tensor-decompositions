@@ -41,7 +41,9 @@ def test_incorrect_tl_int32():
     a = tl.int32(a)
     assert type(a) is numpy.ndarray
 
-
+def test_tl_float32():
+    tl.set_backend("pytorch")
+    assert tl.float32 is torch.float32
 
 def test_type_casts():
     tl.set_backend("pytorch")
@@ -67,6 +69,9 @@ def test_reshape():
     assert tl.shape(tl.reshape(a, (-1,))) == (10,)
     with pytest.raises(TypeError):
         tl.reshape(a, (-1))
+
+    with pytest.raises(TypeError):
+        tl.reshape(a, (-1,), copy=False)
 
 def test_argsort():
     tl.set_backend("pytorch")

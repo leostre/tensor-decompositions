@@ -1,8 +1,6 @@
 from enum import Enum
-from functools import partial, partialmethod, reduce
+from functools import partial
 from typing import *
-import torch
-import math
 
 import tensorly as tl
 from tdecomp._base import TensorLike
@@ -44,7 +42,7 @@ def fro_norm(X: TensorLike) -> tuple[TensorLike, TensorLike]:
 def ridge_leverage(
     X: TensorLike,
     lam: Optional[float] = None,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> Tuple[TensorLike, TensorLike]:
     m, n = tl.shape(X)
     
     if lam is None:
