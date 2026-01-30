@@ -2,6 +2,8 @@ import math
 from typing import Any, List, Optional, Union
 
 import tensorly as tl
+
+import tdecomp
 tl.set_backend('pytorch') #TODO think about place of it
 type TensorLike = Any
 '''Tensorly supports work with different tensor backends (numpy, torch.tensor and so on), 
@@ -10,7 +12,8 @@ So the tensor can be of `Any` type depending on backend setted in `tl.set_backen
 
 from functools import wraps
 from abc import ABC, abstractmethod
-from tdecomp.matrix.random_projections import PROJECTOR_GENS
+from tdecomp.matrix.random_projections import ProjectorGenerator
+from tdecomp.matrix.importance_generators import ColumnRowImportancesGenerator
 
 __all__ = [
     'Number',
@@ -53,10 +56,9 @@ def _conditioning(f):
             return f(self, W, rank, *args, **kwargs)
         if tl.ndim(conditioner) != 1:
             W = tl.matmul(W, conditioner)
-            conditionerT = tl.transpose(conditioner)
-            pseudo_inverse = tl.solve(tl.matmul(conditionerT, conditioner), conditionerT) #warn can failed if C singular
+            inverse_conditioner = tdecomp.utils.pseudo_inverse(conditioner)
             *decomposition, Vh = f(self, W, rank, *args, **kwargs)
-            Vh = tl.matmul(Vh, pseudo_inverse)
+            Vh = tl.matmul(Vh, inverse_conditioner)
             return *decomposition, Vh
         else: 
             W = tl.einsum('ij,j->ij', W, conditioner)
@@ -68,10 +70,10 @@ def _conditioning(f):
 
 class Decomposer(ABC):
     def __init__(self, rank: Optional[Number] = None, distortion_factor: float = 0.6, 
-                 projector_init = PROJECTOR_GENS.normal):
+                 random_init: (ProjectorGenerator | ColumnRowImportancesGenerator) = ProjectorGenerator.normal):
         assert 0 < distortion_factor <= 1, 'distortion_factor must be in (0, 1]'
         self.distortion_factor = distortion_factor
-        self.projector_init = projector_init
+        self.random_init = random_init
         self.rank = rank
         self._conditioner = None
 

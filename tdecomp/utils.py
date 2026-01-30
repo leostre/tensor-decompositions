@@ -1,8 +1,11 @@
 from functools import partial, wraps
 
 import torch
+import tensorly as tl
 
 from torch.ao.quantization.utils import _normalize_kwargs
+
+from tdecomp._base import TensorLike
 
 __all__ = [
     'filter_kw_universal',
@@ -114,3 +117,9 @@ def svd_solver_tikhonov(A: torch.Tensor, b: torch.Tensor, svd_func=None, tol=1e-
             break 
         lmbd *= lmbd_decay
     return x
+
+
+def pseudo_inverse(A: TensorLike) -> TensorLike:
+    '''Find pseudo inverse <b>matrix</b>. Can fail, if A is singular.'''
+    AT = tl.transpose(A)
+    return tl.solve(tl.matmul(AT, A), AT)

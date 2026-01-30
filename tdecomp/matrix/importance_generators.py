@@ -1,8 +1,11 @@
-from functools import partialmethod, reduce
+from enum import Enum
+from functools import partial, partialmethod, reduce
 from typing import *
 import torch
 import math
 
+import tensorly as tl
+from tdecomp._base import TensorLike
 
 __all__ = [
     'l1_norm',
@@ -13,120 +16,97 @@ __all__ = [
     'ImportanceComputer'
 ]
 
-def l1_norm(X: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+def _normalize_importances(col_norms: TensorLike, row_norms: TensorLike) -> tuple[TensorLike, TensorLike]:
+    return col_norms / (tl.sum(col_norms) + 1e-10), row_norms / (tl.sum(row_norms) + 1e-10)
 
-    col_norms = torch.linalg.norm(X, ord=1, dim=0) 
-    row_norms = torch.linalg.norm(X, ord=1, dim=1)
-    
-    col_probs = col_norms / (col_norms.sum() + 1e-10)
-    row_probs = row_norms / (row_norms.sum() + 1e-10)
-    
-    return col_probs, row_probs
+def l1_norm(X: TensorLike) -> tuple[TensorLike, TensorLike]:
+    col_norms = tl.norm(X, order=1, axis=0) 
+    row_norms = tl.norm(X, order=1, axis=1)    
+    return _normalize_importances(col_norms, row_norms)
 
-def l2_norm(X: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+def l2_norm(X: TensorLike) -> tuple[TensorLike, TensorLike]:
+    col_norms = tl.norm(X, order=2, axis=0) 
+    row_norms = tl.norm(X, order=2, axis=1)
+    return _normalize_importances(col_norms, row_norms)
 
-    col_norms = torch.linalg.norm(X, ord=2, dim=0) 
-    row_norms = torch.linalg.norm(X, ord=2, dim=1)
-    
-    col_probs = col_norms / (col_norms.sum() + 1e-10)
-    row_probs = row_norms / (row_norms.sum() + 1e-10)
-    
-    return col_probs, row_probs
+def linf_norm(X: TensorLike) -> tuple[TensorLike, TensorLike]:
+    col_norms = tl.norm(X, order=float('inf'), axis=0)
+    row_norms = tl.norm(X, order=float('inf'), axis=1)
+    return _normalize_importances(col_norms, row_norms)
 
-def linf_norm(X: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-
-    col_scores = torch.linalg.norm(X, ord=float('inf'), dim=0)
-    row_scores = torch.linalg.norm(X, ord=float('inf'), dim=1)
-
-    col_probs = col_scores / (col_scores.sum() + 1e-10)
-    row_probs = row_scores / (row_scores.sum() + 1e-10)
-
-    return col_probs, row_probs
-
-def fro_norm(X: torch.Tensor, eps: float = 1e-10) -> Tuple[torch.Tensor, torch.Tensor]:
-
-    col_scores = (X * X).sum(dim=0)
-    row_scores = (X * X).sum(dim=1)
-
-    col_probs = col_scores / (col_scores.sum() + eps)
-    row_probs = row_scores / (row_scores.sum() + eps)
-    return col_probs, row_probs
+def fro_norm(X: TensorLike) -> tuple[TensorLike, TensorLike]:
+    '''Diffs from l2_norm in squared sum'''
+    x_squared = X * X
+    col_scores = (x_squared).sum(dim=0)
+    row_scores = (x_squared).sum(dim=1)
+    return _normalize_importances(col_scores, row_scores)
 
 def ridge_leverage(
-    X: torch.Tensor,
+    X: TensorLike,
     lam: Optional[float] = None,
-    eps: float = 1e-10,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    m, n = X.shape
-    device = X.device
+    m, n = tl.shape(X)
     
     if lam is None:
-        lam = 1e-6 * (X.pow(2).sum().item() / max(m, n))
+        lam = 1e-6 * (tl.sum(X * X) / max(m, n))
     
 
+    Xt = tl.transpose(X)
     if m >= n:
         # Случай "Длинная матрица": инвертируем n x n
-        XtX = X.T @ X
-        M_reg = XtX + lam * torch.eye(n, device=device)
-        # M_inv = (X^T X + lam I)^-1
-        # Используем cholesky_solve для SPD матрицы (быстрее и стабильнее общего solve)
-        L = torch.linalg.cholesky(M_reg)
-        M_inv = torch.cholesky_solve(torch.eye(n, device=device), L)
-        
-        # 1. Row Scores: diag(X M_inv X^T) -> построчно x_i M_inv x_i^T
-        # B = M_inv @ X.T -> но эффективнее считать (X @ M_inv) * X
-        XM = X @ M_inv # m x n
-        row_scores = (XM * X).sum(dim=1)
+        XtX = tl.matmul(Xt, X)
+        I = tl.eye(n, **tl.context(X))
+        M_reg = XtX + lam * I # type: ignore
+        M_inv = tl.solve(M_reg, I) # n x n
+
+        # 1. Row Scores: diag(X M_inv X^T) -> построчно x_i M_inv x_i^T (m x m)
+        row_scores = tl.sum(tl.matmul(X, tl.matmul(M_inv, Xt)), axis=1)
         
         # 2. Col Scores: diag( 1/lam * (G - G M_inv G) )
         # G = XtX. Считаем K = G @ M_inv @ G
-        # Col scores = (G_jj - K_jj) / lam
-        term2 = XtX @ M_inv @ XtX
-        col_scores = (torch.diagonal(XtX) - torch.diagonal(term2)) / lam
+        term2 = tl.matmul(XtX, tl.matmul(M_inv, XtX))
+        col_scores = (tl.diag(XtX) - tl.diag(term2)) / lam
         
     else:
         # Случай "Широкая матрица": инвертируем m x m
-        XXt = X @ X.T
-        M_reg = XXt + lam * torch.eye(m, device=device)
-        
-        L = torch.linalg.cholesky(M_reg)
-        M_inv = torch.cholesky_solve(torch.eye(m, device=device), L)
+        XXt = tl.matmul(X, Xt)
+        I = tl.eye(m, **tl.context(X))
+        M_reg = XXt + lam * I
+        M_inv = tl.solve(M_reg, I) # m x m
         
         # 1. Col Scores: diag(X^T M_inv X)
-        XtM = X.T @ M_inv # n x m
-        col_scores = (XtM * X.T).sum(dim=1)
+        XtM = tl.matmul(Xt, M_inv) # n x m
+        col_scores = tl.matmul(XtM, X).sum(dim=1) #TODO проверить короче, мб дело в sum
         
         # 2. Row Scores: diag( 1/lam * (G - G M_inv G) ) где G = XXt
-        term2 = XXt @ M_inv @ XXt
-        row_scores = (torch.diagonal(XXt) - torch.diagonal(term2)) / lam
+        term2 = tl.matmul(XXt, tl.matmul(M_inv, XXt))
+        row_scores = (tl.diag(XXt) - tl.diag(term2)) / lam
 
     # Clamp для удаления численного шума (например -1e-16)
-    row_scores = row_scores.clamp_min(0.0)
-    col_scores = col_scores.clamp_min(0.0)
-
-    col_probs = col_scores / (col_scores.sum() + eps)
-    row_probs = row_scores / (row_scores.sum() + eps)
+    row_scores = tl.clip(row_scores, 0.0, None)
+    col_scores = tl.clip(col_scores, 0.0, None)
     
-    return col_probs, row_probs
+    return _normalize_importances(col_scores, row_scores)
 
+
+class ColumnRowImportancesGenerator(Enum):
+    l1_norm = partial(l1_norm)
+    l2_norm = partial(l2_norm)
+    linf_norm = partial(linf_norm)
+    fro_norm = partial(fro_norm)
+    ridge_leverage = partial(ridge_leverage)
 
 class ImportanceComputer:
 
-    def __init__(self, mode: str):
+    def __init__(self, mode: ColumnRowImportancesGenerator):
         self.mode = mode
-        if mode not in IMPORTANCE_GENS:
-            raise ValueError(f"Unknown importance method: {mode}. "
-                           f"Available: {list(IMPORTANCE_GENS.keys())}")
     
-    def compute(self, X: torch.Tensor, rank: int = None, **kwargs) -> Tuple[torch.Tensor, torch.Tensor]:
-        method = IMPORTANCE_GENS[self.mode]
-        return method(X, rank=rank, **kwargs)
-    
-    def get_available_methods(self) -> List[str]:
-        return list(IMPORTANCE_GENS.keys())
+    def compute(self, X: TensorLike) -> Tuple[TensorLike, TensorLike]:
+        method = self.mode.value
+        return method(X)
 
 
-__locals = locals()
-IMPORTANCE_GENS = {
-    name: func for name, func in __locals.items() if name not in ('ImportanceComputer',)
-}
+# __locals = locals()
+# IMPORTANCE_GENS = {
+#     name: func for name, func in __locals.items() if name not in ('ImportanceComputer',)
+# }
