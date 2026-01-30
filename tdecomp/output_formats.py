@@ -1,13 +1,11 @@
 import abc
-import torch
+import tensorly as tl
 from functools import reduce
-
-# from tensorly.... mode_mmul
-
+from tdecomp._base import TensorLike
 
 class _IDecompositionResult(abc.ABC):
     @abc.abstractmethod
-    def compose(cls, *tensors):
+    def compose(cls, *tensors) -> TensorLike:
         pass 
 
     def __init__(self, tensors):
@@ -19,8 +17,8 @@ class _IDecompositionResult(abc.ABC):
 
 class LinearDecomposition(_IDecompositionResult):
     @classmethod
-    def compose(cls, *tensors):
-        return reduce(torch.matmul, tensors)
+    def compose(cls, *tensors) -> TensorLike:
+        return reduce(tl.matmul, tensors)
 
 
 class ModalDecomposition(_IDecompositionResult):
