@@ -68,8 +68,8 @@ def _conditioning(f):
             return *decomposition, Vh
     return _conditioned
 
-class Decomposer(ABC):
-    def __init__(self, rank: Optional[Number] = None, distortion_factor: float = 0.6, 
+class AbstractDecomposer(ABC):
+    def __init__(self, rank = None, distortion_factor: float = 0.6, 
                  random_init: (ProjectorGenerator | ColumnRowImportancesGenerator) = ProjectorGenerator.normal):
         assert 0 < distortion_factor <= 1, 'distortion_factor must be in (0, 1]'
         self.distortion_factor = distortion_factor
@@ -77,40 +77,36 @@ class Decomposer(ABC):
         self.rank = rank
         self._conditioner = None
 
-    def _get_rank(self, tensor: TensorLike, rank: Optional[Number]) -> int:
-        rank = rank or self.rank
-        if rank is None:
-            rank = self.estimate_stable_rank(tensor)
-        elif isinstance(rank, float):
-            rank = max(1, int(rank * min(tl.shape(tensor))))
-        elif isinstance(rank, int):
-            rank = min(rank, min(tl.shape(tensor)))
-        else:
-            raise TypeError(f'Expected types for `rank`: {repr(Number)}, got `{type(rank)}`')
-        return rank
+    @abstractmethod
+    def _get_rank(self, tensor: TensorLike, rank) -> int | List[int]:
+        pass
+
+    @abstractmethod
+    def _decompose(self, X: TensorLike, rank) -> tuple[TensorLike, ...]:
+        pass
+
+    def _decompose_big(self, X: TensorLike, rank) -> tuple[TensorLike, ...]:
+        return self._decompose(X, rank)
+
+    @abstractmethod
+    def compose(self, *factors, **kwargs) -> TensorLike:
+        pass
 
     @_conditioning
-    def decompose(self, tensor: TensorLike, rank: Optional[Number] = None, *args, **kwargs) -> tuple[TensorLike, TensorLike, TensorLike]:
+    def decompose(self, tensor: TensorLike, rank = None) -> tuple[TensorLike, ...]:
         rank = self._get_rank(tensor, rank)
         if not self._is_big(tensor):
-            return self._decompose(tensor, rank, *args, **kwargs)
+            return self._decompose(tensor, rank)
         else:
-            return self._decompose_big(tensor, rank, *args, **kwargs)
-        
-    def _is_big(self, W: TensorLike):
+            return self._decompose_big(tensor, rank)
+    
+    def _is_big(self, W: TensorLike) -> bool:
         return sum(tl.shape(W)) > DIM_SUM_LIM or any(d > DIM_LIM for d in tl.shape(W))
     
     def set_conditioner(self, conditioner: TensorLike):
         self._conditioner = conditioner
-        
-    @abstractmethod
-    def _decompose(self, W: TensorLike, rank: int, *args, **kwargs) -> tuple[TensorLike, TensorLike, TensorLike]:
-        pass
     
-    def _decompose_big(self, W: TensorLike, rank: int, *args, **kwargs) -> tuple[TensorLike, TensorLike, TensorLike]:
-        return self._decompose(W, rank, *args, **kwargs)
-    
-    def estimate_stable_rank(self, W: TensorLike):
+    def estimate_stable_rank(self, W: TensorLike) -> int:
         n_samples = max(tl.shape(W))
         eps = self.distortion_factor
         min_num_samples = int(4 * math.log(n_samples) / (eps**2 / 2 - eps**3 / 3))
@@ -125,9 +121,37 @@ class Decomposer(ABC):
             initial_norm = tl.norm(tensor, order=2)
             error_norm /= initial_norm + eps
         return error_norm
-    
 
-    def compose(self, *factors, **kwargs) -> TensorLike:
+class Decomposer(AbstractDecomposer):
+    def __init__(self, rank: Optional[Number] = None, distortion_factor: float = 0.6, 
+                 random_init: (ProjectorGenerator | ColumnRowImportancesGenerator) = ProjectorGenerator.normal):
+        super().__init__(rank=rank, distortion_factor=distortion_factor, random_init=random_init)
+
+    def _get_rank(self, tensor: TensorLike, rank: Optional[Number]) -> int:
+        rank = rank or self.rank
+        if rank is None:
+            rank = self.estimate_stable_rank(tensor)
+        elif isinstance(rank, float):
+            rank = max(1, int(rank * min(tl.shape(tensor))))
+        elif isinstance(rank, int):
+            rank = min(rank, min(tl.shape(tensor)))
+        else:
+            raise TypeError(f'Expected types for `rank`: {repr(Number)}, got `{type(rank)}`')
+        return rank
+    
+    #override base method in purpose of correct typing of 'rank' field
+    def decompose(self, tensor: TensorLike, rank: Optional[Number] = None) -> tuple[TensorLike, TensorLike, TensorLike]:
+        return super().decompose(tensor, rank)
+    
+    #override this for correct typing in child classes
+    @abstractmethod
+    def _decompose(self, X: TensorLike, rank: int) -> tuple[TensorLike, TensorLike, TensorLike]:
+        pass
+
+    def _decompose_big(self, X: TensorLike, rank: int) -> tuple[TensorLike, TensorLike, TensorLike]:
+        return super()._decompose_big(X, rank)
+
+    def compose(self, *factors: TensorLike, **kwargs) -> TensorLike:
         '''
         :param factors: U S and Vh or US and Vh. Works only with 2D tensors, S treated as 1D diagonal.
         '''
@@ -140,11 +164,10 @@ class Decomposer(ABC):
             return tl.matmul(US, Vh)
         else:
             raise ValueError('Unknown type of decomposition!')
-
-
-class TensorDecomposer(Decomposer):
-    def _get_tensor_rank(self, tensor: TensorLike, rank: Optional[Union[Number, List]]) -> List[int]:
-        '''Apply rank to tensor. Used word "rank" in term of shape, not a lineary-independent tensor basis (not a matrix rank).
+    
+class TensorDecomposer(AbstractDecomposer):
+    def _get_rank(self, tensor: TensorLike, rank: Optional[Union[Number, List[Number]]]) -> List[int]:
+        '''Apply rank to tensor. Used word "rank" in term of shape and m-mode rank, not a lineary-independent tensor basis (not a matrix rank).
         '''
         rank = rank or self.rank
         tensor_ndim = tl.ndim(tensor)
@@ -172,11 +195,23 @@ class TensorDecomposer(Decomposer):
             raise TypeError(f'Supported formats are: int, float (0,1] and lists of them, got {type(rank)}')
         return rank # type: ignore
 
-    def compose(self, core: TensorLike, *factors) -> TensorLike:
+    #override base method in purpose of correct typing of 'rank' field
+    def decompose(self, tensor: TensorLike, rank: Optional[Number | List[Number]] = None) -> tuple[TensorLike, ...]:
+        return super().decompose(tensor, rank)
+    
+    #override this for correct typing in child classes
+    @abstractmethod
+    def _decompose(self, X: TensorLike, rank: List[int]) -> tuple[TensorLike, ...]:
+        pass
+
+    def _decompose_big(self, X: TensorLike, rank: List[int]) -> tuple[TensorLike, ...]:
+        return super()._decompose_big(X, rank)
+
+    def compose(self, core: TensorLike, *factors: TensorLike) -> TensorLike:
         for i, factor in enumerate(factors):
             core = tl.tenalg.mode_dot(core, factor, i)
         return core
     
-    def get_approximation_error(self, tensor: TensorLike, *approximation, relative = True):
+    def get_approximation_error(self, tensor: TensorLike, *approximation: TensorLike, relative = True):
         core, factors = approximation
         return super().get_approximation_error(tensor, core, *factors, relative=relative)

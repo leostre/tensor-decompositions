@@ -16,7 +16,7 @@ __all__ = [
 ]
 
 class SVDDecomposition(Decomposer):
-    def _decompose(self, W: TensorLike, rank) -> tuple[TensorLike, TensorLike, TensorLike]:
+    def _decompose(self, X: TensorLike, rank) -> tuple[TensorLike, TensorLike, TensorLike]:
         """Standart SVD decomposition, realization depends on various backends.  
         Result is non-determenistic, sign of U and V can change in columns together.
 
@@ -25,7 +25,7 @@ class SVDDecomposition(Decomposer):
         Returns:
             U, S, Vt: decomposition
         """
-        return tl.truncated_svd(W, n_eigenvecs=min(tl.shape(W)))
+        return tl.truncated_svd(X, n_eigenvecs=min(tl.shape(X)))
 
 
 class RandomizedSVD(Decomposer):
@@ -148,7 +148,7 @@ class CURDecomposition(Decomposer):
 
         return C_matrix, W_matrix, R_matrix
 
-    def compose(self, *factors, **kwargs) -> TensorLike:
+    def compose(self, *factors: TensorLike, **kwargs) -> TensorLike:
         C, U, R = factors
         return tl.matmul(C, tl.matmul(U, R))
 

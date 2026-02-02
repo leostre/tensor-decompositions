@@ -1,16 +1,11 @@
 from typing import *
 
-from tensorly import set_backend
-from tensorly.tenalg import mode_dot
-from tensorly.base import unfold
-import torch
+import tensorly as tl
 
-from tdecomp._base import TensorDecomposer, Number
+import tdecomp
+from tdecomp._base import TensorDecomposer, Number, TensorLike
 from tdecomp.matrix.decomposer import RandomizedSVD
-from tdecomp.matrix.random_projections import Projector
-
-set_backend('pytorch')
-
+from tdecomp.matrix.random_projections import Projector, ProjectorGenerator
 
 __all__ = [
     'RPHOSVDDecomposition',
@@ -37,39 +32,36 @@ class RPHOSVDDecomposition(TensorDecomposer):
         random_init: type of random initialization ('normal' or 'ortho')
     """
     
-    def __init__(self, *, rank: Optional[Union[int, List[int]]] = None, 
+    def __init__(self, *, rank: Optional[Union[Number, List[Number]]] = None, 
                  distortion_factor: float = 0.6,
                  power: int = 3,
-                 random_init: str = 'normal'):
+                 random_init: ProjectorGenerator = ProjectorGenerator.normal):
         super().__init__(rank=rank, distortion_factor=distortion_factor, random_init=random_init)
         self.power = power
         self.projector = Projector(random_init)
 
-    def _decompose(self, tensor: torch.Tensor, rank: List[int]) -> tuple:
+    def _decompose(self, X: TensorLike, rank: List[int]) -> tuple[TensorLike, ...]:
         
-        self.shape = list(tensor.shape)
         factor_matrices = []
 
-        for mode_idx in range(tensor.dim()):
-            unfold_tensor = unfold(tensor, mode_idx)
+        for mode_idx in range(tl.ndim(X)):
+            unfold_tensor = tl.unfold(X, mode_idx)
             projected_matrix = self.projector.rproject(unfold_tensor, rank[mode_idx], renew=True)
 
             # Perform QR decomposition on the projection matrix
-            Q, R = torch.linalg.qr(projected_matrix.T, mode='reduced')  # QR on transposed projection
-            from functools import reduce
+            Q, _ = tl.qr(tl.transpose(projected_matrix), mode='reduced')  # QR on transposed projection
+            #from functools import reduce
             # assert tuple(Q.shape) == (reduce(int.__mul__, self.shape) // tensor.shape[mode_idx], rank[mode_idx])
 
-            tensor = mode_dot(tensor, Q.T, mode_idx)
+            X = tl.tenalg.mode_dot(X, tl.transpose(Q), mode_idx)
             
             # Store factor matrix (Q has shape (mode_size, target_rank))
             factor_matrices.append(Q)
             
-            # Calculate new shape for the contracted tensor
-            self.shape[mode_idx] = rank[mode_idx]
         
         # The final current_tensor is the core tensor
         
-        return tensor, factor_matrices
+        return X, factor_matrices
 
 
 class RSTHOSVDDecomposition(TensorDecomposer):
@@ -90,11 +82,11 @@ class RSTHOSVDDecomposition(TensorDecomposer):
         random_init: type of random initialization ('normal' or 'ortho')
     """
     
-    def __init__(self, *, rank: Optional[Union[int, List[int]]] = None,
+    def __init__(self, *, rank: Optional[Union[Number, List[Number]]] = None,
                  oversampling: int = 10,
                  power_iteration: int = 2,
                  distortion_factor: float = 0.1,
-                 random_init: str = 'normal'):
+                 random_init: ProjectorGenerator = ProjectorGenerator.normal):
         super().__init__(rank=rank, distortion_factor=distortion_factor, random_init=random_init)
         self.oversampling = oversampling
         self.power_iteration = power_iteration
@@ -104,7 +96,7 @@ class RSTHOSVDDecomposition(TensorDecomposer):
             random_init=random_init
         )
     
-    def _decompose(self, tensor: torch.Tensor, rank: List[int]) -> tuple:
+    def _decompose(self, X: TensorLike, rank: List[int]) -> tuple[TensorLike, ...]:
         """
         Decompose tensor using R-STHOSVD
         
@@ -116,16 +108,16 @@ class RSTHOSVDDecomposition(TensorDecomposer):
         """
 
         # Initialize core tensor and factor matrices
-        core_tensor = tensor.clone()
-        self.original_shape = tensor.shape
+        core_tensor = tl.tensor(X, **tl.context(X))
+        self.original_shape = tl.shape(X)
         factor_matrices = []
         
         # Process each mode in reverse order to get correct core tensor shape
-        for mode_idx in range(tensor.dim()):
-            ort = unfold(tensor, mode_idx)
-            U, *_= self.rsvd.decompose(ort)
+        for mode_idx in range(tl.ndim(X)):
+            ort = tl.unfold(X, mode_idx)
+            U, *_= self.rsvd.decompose(ort, rank[mode_idx])
             factor_matrices.append(U)
-            core_tensor = mode_dot(core_tensor, U.T, mode_idx)
+            core_tensor = tl.tenalg.mode_dot(core_tensor, tl.transpose(U), mode_idx)
         
         return core_tensor, factor_matrices
 
@@ -148,20 +140,20 @@ class RSTDecomposition(TensorDecomposer):
         random_init: type of random initialization ('normal' or 'ortho')
     """
     
-    def __init__(self, *, rank: Optional[Union[int, List[int]]] = None,
+    def __init__(self, *, rank: Optional[Union[Number, List[Number]]] = None,
                  sampling_method: str = 'norm_based',
                  distortion_factor: float = 0.6,
-                 random_init: str = 'normal'):
+                 random_init: ProjectorGenerator = ProjectorGenerator.normal):
         super().__init__(random_init=random_init, rank=rank, distortion_factor=distortion_factor)
         self.rsvd = RandomizedSVD(
             None, distortion_factor=distortion_factor, random_init=random_init
         )
 
-    def _sample(self, tensor, n):
-        return tensor[..., torch.randperm(tensor.shape[-1])[:n]]
+    def _sample(self, tensor: TensorLike, n: int) -> TensorLike:
+        return tensor[..., tdecomp.utils.randperm(tensor.shape[-1], tl.context(tensor))[:n]]
         
     
-    def _decompose(self, tensor: torch.Tensor, rank: List[int]) -> tuple:
+    def _decompose(self, X: TensorLike, rank: List[int]) -> tuple[TensorLike, ...]:
         """
         Decompose tensor using R-ST algorithm
         
@@ -172,19 +164,17 @@ class RSTDecomposition(TensorDecomposer):
             tuple: (core_tensor, factor_matrices)
         """
         
-        # Store original tensor shape
-        self.original_shape = tensor.shape
-        core_tensor = tensor
+        core_tensor = tl.tensor(X, **tl.context(X))
         factor_matrices = []
         
         # Step 1: For each mode n = 1, 2, ..., N
-        for mode_idx in range(tensor.dim()):
-            ort = unfold(tensor, mode_idx)
+        for mode_idx in range(tl.ndim(X)):
+            ort = tl.unfold(X, mode_idx)
             Q = self._sample(ort, n=rank[mode_idx])
             factor_matrices.append(Q)
             U, S, Vh = self.rsvd.decompose(Q)
-            Q_inv = self.rsvd.compose(Vh.T, 1 / S, U.T)
-            core_tensor = mode_dot(core_tensor, Q_inv, mode_idx)
+            Q_inv = self.rsvd.compose(tl.transpose(Vh), 1 / S, tl.transpose(U))
+            core_tensor = tl.tenalg.mode_dot(core_tensor, Q_inv, mode_idx)
         
         return core_tensor, factor_matrices
     

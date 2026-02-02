@@ -3,6 +3,7 @@ from functools import partial, partialmethod
 import math
 from typing import *
 import tensorly as tl
+import tdecomp
 from tdecomp._base import TensorLike
 
 __all__ = [
@@ -181,7 +182,7 @@ def identity_copies(d: int, k: int, context: dict = _default_context) -> TensorL
     
     R = tl.concatenate(R_parts, axis=1)
 
-    perm = tl.argsort(tl.random.random_tensor((k,), **context), -1)
+    perm = tdecomp.utils.randperm(k, context)
     R = R[:, perm]
     R *= math.sqrt(d / k)
     

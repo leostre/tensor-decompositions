@@ -125,3 +125,10 @@ def pseudo_inverse(A: TensorLike) -> TensorLike:
     '''Find pseudo inverse <b>matrix</b>. Can fail, if A is singular.'''
     AT = tl.transpose(A)
     return tl.solve(tl.matmul(AT, A), AT)
+
+def randperm(k: int, context: dict = {}) -> TensorLike:
+    '''Analogue of randperm in torch for tensorly. Returns random vector of int numbers from [0, k).
+    Params:
+        context: context from tl.context method. Could contain 'device', 'dtype' and etc.
+    '''
+    return tl.argsort(tl.random.random_tensor((k,), **context), 0)
