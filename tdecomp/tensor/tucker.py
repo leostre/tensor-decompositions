@@ -3,7 +3,8 @@ from typing import *
 import tensorly as tl
 
 import tdecomp
-from tdecomp._base import TensorDecomposer, Number, TensorLike
+from tdecomp.types import TensorLike, Number
+from tdecomp._base import TensorDecomposer
 from tdecomp.matrix.decomposer import RandomizedSVD
 from tdecomp.matrix.random_projections import Projector, ProjectorGenerator
 

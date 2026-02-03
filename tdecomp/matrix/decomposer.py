@@ -3,7 +3,8 @@ from functools import partial
 from typing import *
 
 import tdecomp
-from tdecomp._base import TensorLike, Decomposer, Number, _need_t
+from tdecomp.types import Number, TensorLike
+from tdecomp._base import Decomposer, _need_t
 from tdecomp.matrix.random_projections import ProjectorGenerator
 from tdecomp.matrix.importance_generators import ColumnRowImportancesGenerator
 import tensorly as tl

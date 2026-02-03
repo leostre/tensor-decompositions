@@ -3,7 +3,7 @@ from functools import partial
 from typing import *
 
 import tensorly as tl
-from tdecomp._base import TensorLike
+from tdecomp.types import TensorLike
 
 __all__ = [
     'l1_norm',

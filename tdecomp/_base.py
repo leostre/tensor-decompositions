@@ -4,11 +4,8 @@ from typing import Any, List, Optional, Union
 import tensorly as tl
 
 import tdecomp
+from tdecomp.types import Number, TensorLike
 tl.set_backend('pytorch') #TODO think about place of it
-type TensorLike = Any
-'''Tensorly supports work with different tensor backends (numpy, torch.tensor and so on), 
-but it doesnt describe abstract class for it. 
-So the tensor can be of `Any` type depending on backend setted in `tl.set_backend` .'''
 
 from functools import wraps
 from abc import ABC, abstractmethod
@@ -20,8 +17,6 @@ __all__ = [
     'Decomposer',
     'TensorDecomposer'
 ]
-
-Number = Union[int, float]
 
 DIM_SUM_LIM = 1024
 DIM_LIM = 1024

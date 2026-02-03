@@ -6,7 +6,7 @@ import tensorly as tl
 
 from torch.ao.quantization.utils import _normalize_kwargs
 
-from tdecomp._base import TensorLike
+from tdecomp.types import TensorLike
 
 __all__ = [
     'filter_kw_universal',

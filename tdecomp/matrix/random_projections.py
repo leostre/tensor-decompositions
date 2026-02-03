@@ -4,7 +4,7 @@ import math
 from typing import *
 import tensorly as tl
 import tdecomp
-from tdecomp._base import TensorLike
+from tdecomp.types import TensorLike
 
 __all__ = [
     'normal',
@@ -29,10 +29,12 @@ def normal(rows: int, cols: int, context: dict = _default_context) -> TensorLike
 
 
 def ortho(rows: int, cols: int, context: dict = _default_context) -> TensorLike:
-    P = normal(rows, cols, context)
-    if (rows < cols):
-        P = tl.transpose(P)
-
+    P = None
+    if (rows >= cols):
+        P = normal(rows, cols, context)
+    else:
+        P = normal(cols, rows, context)
+        
     q, r = tl.qr(P, mode="reduced")
     # Make Q uniform according to https://arxiv.org/pdf/math-ph/0609050.pdf
     ph = tl.sign(tl.diag(r))

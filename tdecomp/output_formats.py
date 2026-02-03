@@ -1,7 +1,7 @@
 import abc
 import tensorly as tl
 from functools import reduce
-from tdecomp._base import TensorLike
+from tdecomp.types import TensorLike
 
 class _IDecompositionResult(abc.ABC):
     @abc.abstractmethod
