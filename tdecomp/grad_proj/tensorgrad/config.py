@@ -7,6 +7,8 @@ class DataConfig:
     n_train: int = None
     tmp_dir: str = "/tmp/t2t_datagen"  # From tensor2tensor example :cite[4]
 
+type Galore2DProjectionSide = Literal["right", "left", "full"]
+
 @dataclass
 class OptimizerConfig:
     # Basic optimizer parameters
@@ -25,7 +27,7 @@ class OptimizerConfig:
     rank: int = 128
     scale: float = 1.0
     proj_type: Literal["low_rank", "structured_sparse", "unstructured_sparse"] = "low_rank"
-    galore_2d_proj_type: Literal["right", "left", "full"] = "left"
+    galore_2d_proj_type: Galore2DProjectionSide = "left"
     sparse_ratio: float = 0.1  # Ratio of elements to keep in sparse projections
     sparse_type: Literal['topk', 'randK', 'probability'] = "topk"
     scale_by_mask_ratio: bool = True

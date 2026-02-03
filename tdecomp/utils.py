@@ -132,3 +132,20 @@ def randperm(k: int, context: dict = {}) -> TensorLike:
         context: context from tl.context method. Could contain 'device', 'dtype' and etc.
     '''
     return tl.argsort(tl.random.random_tensor((k,), **context), 0)
+
+def is_complex(X: TensorLike) -> bool:
+    '''Backend-independent check whether tensor complex or real. 
+    
+    WARN! Tested only on `pytorch` and `numpy` backends
+    '''
+    if "complex" in str(tl.context(X)["dtype"]):
+        return True
+    return False
+    #as examples see numpy.complex128 and torch.complex128
+
+def is_floating_point(X: TensorLike) -> bool:
+    '''Backend-independent check whether tensor has float dtype or not.'''
+    if "float" in str(tl.context(X)["dtype"]):
+        return True
+    return False
+    #as example torch.float, torch.float32, torch.float64, numpy.float64, numpy.float16, numpy.float32, tensorflow.float16

@@ -1,141 +1,155 @@
 from functools import partial
+from typing import Callable, Optional
 
 import torch
-from tensorly import tenalg
 from torch.utils.checkpoint import checkpoint
 
+
+import tdecomp
+from tdecomp.grad_proj.tensorgrad.config import Galore2DProjectionSide
+from tdecomp.grad_proj.tensorgrad.projectors.update_gap_scheduler import UpdateGapScheduler
+from tdecomp.types import Number, TensorLike
+import tensorly as tl
+
 class GaLoreProjector:
-    def __init__(self, rank, verbose=False, svd_type=None, update_gap_scheduler=None, scale=1.0, galore_2d_proj_type='left', activation_checkpoint=False, support_complex=False):
+    def __init__(self, 
+                 rank: Number, 
+                 verbose=False, 
+                 svd_type: Optional[Callable[[TensorLike], tuple[TensorLike, TensorLike, TensorLike]]]=None, 
+                 update_gap_scheduler: UpdateGapScheduler = UpdateGapScheduler(100, 1000), 
+                 scale=1.0, 
+                 galore_2d_proj_type: Galore2DProjectionSide = 'left', 
+                 activation_checkpoint=False, 
+                 support_complex=False
+                 ):
         self.rank = rank
         self.verbose = verbose
         self.update_gap_scheduler = update_gap_scheduler
         self.scale = scale
-        self.ortho_matrix = None
-        self.galore_2d_proj_type = galore_2d_proj_type
+        '''Scale used in back projections of tensor (P @ W * scale)'''
+        self.ortho_matrix: TensorLike | tuple[TensorLike, TensorLike] = None
+        self.galore_2d_proj_type: Galore2DProjectionSide = galore_2d_proj_type
         self.activation_checkpointing = activation_checkpoint
+        '''Whether to use 'activation checkpointing' that reduce memory by creating callback function instead of immediate computation.
+        https://docs.pytorch.org/docs/stable/checkpoint.html
+        '''
         self.support_complex = support_complex
-        self._recon_buffer = None  # Pre-allocated reconstruction buffer
-        self.svd_type = svd_type or partial(torch.linalg.svd, full_matrices=False)
+        '''Support of complex numbers'''
+        self._reconstruction_buffer: TensorLike = None  # Pre-allocated reconstruction buffer
+        self.svd_type = svd_type
+        '''Kind of svd algorithm like randomized_svd or truncated_svd. Callable'''
         if verbose:
             print(f"rank={self.rank}, scale={self.scale}, galore_2d_proj_type={self.galore_2d_proj_type}, activation_checkpointing={self.activation_checkpointing}, support_complex={self.support_complex}")
             print(f"GaLoreProjector initialized with rank={self.rank}, scale={self.scale}, galore_2d_proj_type={self.galore_2d_proj_type}, activation_checkpointing={self.activation_checkpointing}, support_complex={self.support_complex}")
 
 
     def _project_right(self, full_rank_grad):
-        low_rank_grad = optional_checkpoint_matmul(full_rank_grad, self.ortho_matrix.t(), self.activation_checkpointing)
+        low_rank_grad = optional_checkpoint_matmul(full_rank_grad, tl.transpose(self.ortho_matrix), self.activation_checkpointing)
         return low_rank_grad
 
     def _project_left(self, full_rank_grad):
-        low_rank_grad = optional_checkpoint_matmul(self.ortho_matrix.t(), full_rank_grad, self.activation_checkpointing)
+        low_rank_grad = optional_checkpoint_matmul(tl.transpose(self.ortho_matrix), full_rank_grad, self.activation_checkpointing)
         return low_rank_grad
 
     def _project_full(self, full_rank_grad):
-        a = optional_checkpoint_matmul(self.ortho_matrix[0].t(), full_rank_grad, self.activation_checkpointing)
-        low_rank_grad = optional_checkpoint_matmul(a, self.ortho_matrix[1].t(), self.activation_checkpointing)
+        a = optional_checkpoint_matmul(tl.transpose(self.ortho_matrix[0]), full_rank_grad, self.activation_checkpointing)
+        low_rank_grad = optional_checkpoint_matmul(a, tl.transpose(self.ortho_matrix[1]), self.activation_checkpointing)
         return low_rank_grad
 
     @torch.no_grad()
     def project(self, full_rank_grad, iter):
+        '''Main method for projecting gradients during model training'''
         type_ = self.galore_2d_proj_type
         if self.ortho_matrix is None or self.update_gap_scheduler.should_update(iter):
             self.ortho_matrix = self.get_orthogonal_matrix(full_rank_grad, self.rank, 
-                                                           type=type_) 
+                                                           galore2dProjectionSide=type_) 
         low_rank_grad = getattr(self, f'_project_{type_}')(full_rank_grad)                              
         return low_rank_grad
+    
+    def _check_reconstruction_buffer_not_none(self, tensor: TensorLike):
+        if self._reconstruction_buffer is None:
+            self._reconstruction_buffer = tl.zeros(tl.shape(tensor), **tl.context(tensor))
 
-    def _project_back_right(self, low_rank_grad):
-        if self._recon_buffer is None:
-            self._recon_buffer = torch.zeros((low_rank_grad.shape[0], self.ortho_matrix.shape[1]), 
-                                                   dtype=low_rank_grad.dtype, device=low_rank_grad.device)
-        self._recon_buffer.zero_()
-        torch.matmul(low_rank_grad, self.ortho_matrix, out=self._recon_buffer)
-        return self._recon_buffer * self.scale
+    def _project_back_right(self, low_rank_grad: TensorLike):
+        self._check_reconstruction_buffer_not_none(low_rank_grad)
+
+        tl.matmul(low_rank_grad, self.ortho_matrix, out=self._reconstruction_buffer)
+        return self._reconstruction_buffer * self.scale
 
     def _project_back_left(self, low_rank_grad):
-        if self._recon_buffer is None:
-            self._recon_buffer = torch.zeros((self.ortho_matrix.shape[0], low_rank_grad.shape[1]), 
-                                                   dtype=low_rank_grad.dtype, device=low_rank_grad.device)
-        self._recon_buffer.zero_()
-        torch.matmul(self.ortho_matrix, low_rank_grad, out=self._recon_buffer)
-        return self._recon_buffer * self.scale
+        self._check_reconstruction_buffer_not_none(low_rank_grad)
+
+        tl.matmul(self.ortho_matrix, low_rank_grad, out=self._reconstruction_buffer)
+        return self._reconstruction_buffer * self.scale
     
 
     def _project_back_full(self, low_rank_grad):
-        if self._recon_buffer is None:
-            self._recon_buffer = torch.zeros((self.ortho_matrix[0].shape[0], self.ortho_matrix[1].shape[1]), 
-                                                   dtype=low_rank_grad.dtype, device=low_rank_grad.device)
-        self._recon_buffer.zero_()
-        intermediate = torch.matmul(self.ortho_matrix[0], low_rank_grad)
-        torch.matmul(intermediate, self.ortho_matrix[1], out=self._recon_buffer)
-        return self._recon_buffer * self.scale
+        if self._reconstruction_buffer is None:
+            self._reconstruction_buffer = tl.zeros((tl.shape(self.ortho_matrix[0])[0], tl.shape(self.ortho_matrix[1])[1]), 
+                                                   **tl.context(low_rank_grad))
+        
+        intermediate = tl.matmul(self.ortho_matrix[0], low_rank_grad)
+        tl.matmul(intermediate, self.ortho_matrix[1], out=self._reconstruction_buffer)
+        return self._reconstruction_buffer * self.scale
 
     @torch.no_grad()
     def project_back(self, low_rank_grad):
         return getattr(self, f'_project_back_{self.galore_2d_proj_type}')(low_rank_grad)
     
-    def get_orthogonal_matrix(self, weights, rank, type):
+    def get_orthogonal_matrix(self, tensor: TensorLike, rank: Number, galore2dProjectionSide: Galore2DProjectionSide) -> TensorLike | tuple[TensorLike, TensorLike]:
+        '''Returns ranked orthogonal matrix from SVD decomposition of `tensor`. If galore2dProjectionSide is `full` returns both U and Vh matricies, otherwise returns one.'''
         with torch.no_grad():
-            module_params = weights
-            if torch.is_complex(module_params.data) and self.support_complex:
+            module_params = tensor
+            original_context = tl.context(module_params)
+            if tdecomp.utils.is_complex(module_params) and self.support_complex:
                 float_data = False
-                original_type = module_params.data.dtype
-                original_device = module_params.data.device
-                matrix = module_params.data.cfloat()
-            elif module_params.data.dtype != torch.float:
+                matrix = module_params + 0j
+            elif not tdecomp.utils.is_floating_point(module_params):
                 float_data = False
-                original_type = module_params.data.dtype
-                original_device = module_params.data.device
-                matrix = module_params.data.float()
+                matrix = module_params * 1.0, 
             else:
                 float_data = True
-                matrix = module_params.data
+                matrix = module_params
 
-            full_n_params = matrix.shape[0] * matrix.shape[1]
+            full_n_params = tl.shape(matrix)[0] * tl.shape(matrix)[1]
             if isinstance(rank, float):
                 low_rank_params = int(rank * full_n_params)
-                int_rank = int(low_rank_params / matrix.shape[0])
+                int_rank = int(low_rank_params / tl.shape(matrix)[0])
             else:
                 int_rank = rank
 
+            if (self.svd_type is None):
+                self.svd_type = partial(tl.truncated_svd, n_eigenvecs=min(tl.shape(tensor)))
+
             #make the smaller matrix always to be orthogonal matrix
-            if type == 'right':
+            if galore2dProjectionSide == 'right':
                 _, _, Vh = self.svd_type(matrix)
                 B = Vh[:int_rank, :]
                 if not float_data:
-                    B = B.to(original_device).type(original_type)
+                    B = tl.tensor(B, **original_context)
                 return B
-            elif type == 'left':
+            elif galore2dProjectionSide == 'left':
                 U, _, _ = self.svd_type(matrix)
                 A = U[:, :int_rank]
                 if not float_data:
-                    A = A.to(original_device).type(original_type)
+                    A = tl.tensor(A, **original_context)
                 return A
-            elif type == 'full':
+            elif galore2dProjectionSide == 'full':
                 U, _, Vh = self.svd_type(matrix)
                 A = U[:, :rank]
                 B = Vh[:rank, :]
                 if not float_data:
-                    A = A.to(original_device).type(original_type)
-                    B = B.to(original_device).type(original_type)
+                    A = tl.tensor(A, **original_context)
+                    B = tl.tensor(B, **original_context)
                 return [A, B]
             else:
-                raise ValueError('type should be left, right or full')
+                raise ValueError('galore2dProjectionSide should be left, right or full')
 
-def optional_checkpoint_matmul(a: torch.Tensor, b: torch.Tensor, activation_checkpoint=True):
+def optional_checkpoint_matmul(a: TensorLike, b: TensorLike, activation_checkpoint=True):
     """optional_checkpoint_matmul performs torch.matmul and optionally performs
-    activation checkpointing. Removed from code to modularize and remove redundant lines
-
-    Parameters
-    ----------
-    a : torch.Tensor
-        input 1 to matmul
-    b : torch.Tensor
-        input 2 to matmul
-    computes torch.matmul(a,b)
-    checkpoint : bool, optional
-        whether to perform activation checkpointing, by default True
+    activation checkpointing.
     """
     if activation_checkpoint:
-        return checkpoint(torch.matmul, a, b)
+        return checkpoint(tl.matmul, a, b)
     else:
-        return torch.matmul(a, b)
+        return tl.matmul(a, b)
