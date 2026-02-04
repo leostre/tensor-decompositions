@@ -149,3 +149,23 @@ def is_floating_point(X: TensorLike) -> bool:
         return True
     return False
     #as example torch.float, torch.float32, torch.float64, numpy.float64, numpy.float16, numpy.float32, tensorflow.float16
+
+
+def no_grad(func):
+    '''Wrapped function doesn't save DAG for gradients on tensors in any form (backend-independent) during it's execution context.
+
+    For example in pytorch it force every computational result tensor inside function to have 'requires_grad=False' and not to have grad_fn.
+    See `@torch.no_grad()`
+    '''
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        backend = tl.get_backend()
+        if backend == "pytorch":
+            with torch.no_grad():
+                return func(*args, **kwargs)
+        elif backend == "numpy":
+            return func(*args, **kwargs)
+        else:
+            raise NotImplementedError(f"Backend `{backend}` haven't support of @no_grad yet!")
+    
+    return wrapper
