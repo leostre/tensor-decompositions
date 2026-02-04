@@ -9,12 +9,14 @@ from torch.autograd.profiler import record_function
 
 from tensorly.tenalg.core_tenalg.n_mode_product import multi_mode_dot
 
+from tdecomp.grad_proj.tensorgrad.projectors.update_gap_scheduler import UpdateGapScheduler
+
 
 class TensorGradLowRankProjector:
     def __init__(
         self, 
         rank, 
-        update_gap_scheduler,  # Instance of UpdateGapScheduler
+        update_gap_scheduler: UpdateGapScheduler,  
         verbose=False, 
         scale=1.0, 
         warm_restart=False,

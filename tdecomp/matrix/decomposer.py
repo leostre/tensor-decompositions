@@ -139,7 +139,7 @@ class CURDecomposition(Decomposer):
         # Evaluate norms for columns and rows
         col_probs, row_probs = self._importance(X)
 
-        
+        #topk most important indices
         column_indices = tl.sort(tl.argsort(col_probs, 0)[-rank:], 0)
         row_indices = tl.sort(tl.argsort(row_probs, 0)[-rank:], 0)
 

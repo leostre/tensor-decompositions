@@ -28,7 +28,7 @@ class GaLoreProjector:
         self.ortho_matrix: TensorLike | tuple[TensorLike, TensorLike] = None
         self.galore_2d_proj_type: Galore2DProjectionSide = galore_2d_proj_type
         self.activation_checkpointing = activation_checkpoint
-        '''Whether to use 'activation checkpointing' that reduce memory by creating callback function instead of immediate computation.
+        '''Whether to use 'activation checkpointing' that reduce memory by creating callback function with tensor operands instead of immediate computation.
         https://docs.pytorch.org/docs/stable/checkpoint.html
         '''
         self.support_complex = support_complex

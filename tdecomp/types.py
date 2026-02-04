@@ -1,4 +1,5 @@
 from typing import Any, Union
+import tensorly as tl
 
 
 type TensorLike = Any
@@ -8,3 +9,5 @@ So the tensor can be of `Any` type depending on backend setted in `tl.set_backen
 
 Number = Union[int, float]
 '''Type, widely used for 'rank' typing'''
+
+BOOL_TYPE = tl.tensor([True]).dtype

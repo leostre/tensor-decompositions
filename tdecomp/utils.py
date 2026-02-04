@@ -150,7 +150,6 @@ def is_floating_point(X: TensorLike) -> bool:
     return False
     #as example torch.float, torch.float32, torch.float64, numpy.float64, numpy.float16, numpy.float32, tensorflow.float16
 
-
 def no_grad(func):
     '''Wrapped function doesn't save DAG for gradients on tensors in any form (backend-independent) during it's execution context.
 
@@ -169,3 +168,23 @@ def no_grad(func):
             raise NotImplementedError(f"Backend `{backend}` haven't support of @no_grad yet!")
     
     return wrapper
+
+
+def multinomial(weights: TensorLike, k: int, context={}) -> TensorLike:
+    """
+    Efraimidis–Spirakis algorithm (A-Res) for weighted sampling without replacement.
+    For each element with weight w_i: key_i = u_i^(1/w_i) where u_i ~ Uniform(0,1).
+    Select k elements (indexes) with largest keys.
+    
+    weights: 1D tensorly tensor of non-negative weights (not necessarily normalized).
+    k: number of samples.
+    context: tensorly context dict.
+    """
+
+    # Efraimidis–Spirakis: key_i = u_i^(1/w_i) or the same as exp(log(u_i^(1/w_i))) -> log(u_i)/w_i
+    eps = 1e-12
+    u = tl.random.random_tensor(tl.shape(weights), **context)
+    u = tl.log2(u) / (weights + eps)
+    
+    # Select k elements with largest keys
+    return tl.argsort(u, 0)[-k:]

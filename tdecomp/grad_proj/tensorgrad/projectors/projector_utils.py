@@ -16,7 +16,6 @@ from ..projectors.galore_projector import GaLoreProjector
 from .tensor_lowrank_projector import TensorGradLowRankProjector
 from .tensor_sparse_projector import TensorGradSparseProjector
 from ..projectors.tensor_unstructured_sparse_projector import TensorGradUnstructuredProjector
-import matplotlib.pyplot as plt
 import copy
 from .update_gap_scheduler import UpdateGapScheduler
 
