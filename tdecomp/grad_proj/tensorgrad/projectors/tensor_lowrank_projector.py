@@ -1,15 +1,18 @@
 from typing import *
 
 import torch
-import json
-import os
-from tensorly.decomposition import tucker
+import tensorly as tl
 from tensorly import tenalg 
 from torch.autograd.profiler import record_function
 
 from tensorly.tenalg.core_tenalg.n_mode_product import multi_mode_dot
 
+import tdecomp
+from tdecomp._base import TensorDecomposer
 from tdecomp.grad_proj.tensorgrad.projectors.update_gap_scheduler import UpdateGapScheduler
+from tdecomp.tensor.tucker import HOOIDecomposition
+from tdecomp.types import TensorLike
+import tdecomp.types
 
 
 class TensorGradLowRankProjector:
@@ -21,7 +24,8 @@ class TensorGradLowRankProjector:
         scale=1.0, 
         warm_restart=False,
         n_iter_max=10,
-        svd_type: Union[Literal['truncated_svd', 'randomized_svd'], Callable]="truncated_svd", # "truncated_svd", "randomized_svd"
+        svd_type: tl.tenalg.svd.SVD_TYPES | Callable[[TensorLike], tuple[TensorLike, TensorLike, TensorLike]] = "truncated_svd",
+        tensor_decomposer_type: type[HOOIDecomposition] = HOOIDecomposition
     ):
         """
         Args:
@@ -44,16 +48,17 @@ class TensorGradLowRankProjector:
         self.num_updates = 0
         self.num_steps = 0
         self._rank_validated = False
-        self.svd_type = svd_type 
-        
+        self.svd_type = svd_type
+        self.tensor_decomposer = tensor_decomposer_type(rank=self.rank, init='svd', n_iter_max=self.n_iter_max, svd_type=self.svd_type)
         if self.verbose:
             print(f"TensorGradLowRankProjector initialized with rank={self.rank}, scale={self.scale}, warm_restart={self.warm_restart}, n_iter_max={self.n_iter_max}, svd_type={self.svd_type}")
         
-    def should_update_projector(self, iter):
+    def should_update_projector(self, iter: int) -> bool:
         return self.update_gap_scheduler.should_update(iter)
 
-    def project(self, full_rank_grad, iter):
-        with torch.no_grad(), record_function("### TENSOR_GRAD_PROJECT_FORWARD"):
+    @tdecomp.utils.no_grad
+    def project(self, full_rank_grad: TensorLike, iter: int):
+        with record_function("### TENSOR_GRAD_PROJECT_FORWARD"):
             if self.proj_tensor is None or self.should_update_projector(iter):
                 self.proj_tensor = self.get_projection_tensor(full_rank_grad)
                 self.num_updates += 1
@@ -77,20 +82,18 @@ class TensorGradLowRankProjector:
     
     
     # Tucker decomp: higher-order SVD
-    def get_projection_tensor(self, weights):
-        matrix = weights.data
-        original_dtype = matrix.dtype
-        
-        # Validate rank format if not done yet
-        self._validate_rank(self.rank, matrix.shape)
-        
+    def get_projection_tensor(self, weights: TensorLike) -> list[TensorLike]: #TODO вынести в tucker.py и проверки и логику, 
+        matrix = weights
+        original_dtype = tl.context(matrix)["dtype"]
+                
         # Always use full precision for tucker decomposition
-        if matrix.dtype == torch.complex32:
-            matrix = matrix.to(torch.complex64)
+        tdecomp.utils.is_complex(matrix)
+        if tdecomp.utils.is_complex(matrix):
+            if tl.context(matrix)["dtype"] is not tdecomp.types.COMPLEX64_TYPE:
+                matrix = tl.tensor(matrix, dtype=tdecomp.types.COMPLEX64_TYPE)
             
             
         # Handle initialization with warm restart
-        init = None
         if self.warm_restart and self.proj_tensor is not None:
             # Convert factors to full precision temporarily for initialization
             # check if on same device as matrix
@@ -101,12 +104,10 @@ class TensorGradLowRankProjector:
             if torch.is_complex(factors[0]) and factors[0].dtype == torch.complex32:
                 factors = [f.to(torch.complex64) for f in factors]
             
-            init = factors
-        else:
-            init = "svd"
+            self.tensor_decomposer.init = tl.tenalg.multi_mode_dot(matrix, factors, transpose=True), factors
             
         try:
-            _, factors = tucker(matrix, rank=self.rank, init=init, n_iter_max=self.n_iter_max, svd=self.svd_type)
+            _, factors = self.tensor_decomposer.decompose(matrix)
             torch.cuda.empty_cache()
         except Exception as e:
             if self.verbose:
@@ -114,7 +115,7 @@ class TensorGradLowRankProjector:
             # lets try again 
             try:
                 matrix = matrix + 1e-8 * torch.randn_like(matrix, dtype=matrix.dtype)  # Add noise for stability
-                _, factors = tucker(matrix, rank=self.rank, init="svd", n_iter_max=self.n_iter_max*2, svd='randomized_svd') # try again
+                _, factors = self.tensor_decomposer.decompose(matrix, init='svd', n_iter_max=self.n_iter_max * 2, svd_type='randomized_svd') # try again
             except Exception as e:
                 raise e
         torch.cuda.empty_cache()
@@ -136,91 +137,3 @@ class TensorGradLowRankProjector:
                 result = multi_mode_dot(x, proj_tensor)
                 output_buffer.add_(result, alpha=alpha)
                 return output_buffer
-
-    def _validate_rank(self, rank, matrix_shape):
-        """
-        Validates and formats the rank parameter for tensor low-rank projection.
-        
-        This method handles different rank specification formats and converts them
-        into a list of per-dimension ranks appropriate for the tensor shape:
-        
-        1. Float (0 < rank < 1): Interpreted as a memory budget percentage.
-           - Distributes the budget evenly across non-singleton dimensions
-           - For example, rank=0.25 means using 25% of the original tensor size
-        
-        2. Integer (rank > 0): Applied as a fixed rank to each dimension
-           - Automatically capped at each dimension's size
-        
-        3. List of values: Provides per-dimension control
-           - List of floats (0-1): Each value is the percentage of that dimension
-           - List of integers: Direct specification of rank for each dimension
-           - Must match the number of tensor dimensions
-        
-        Parameters:
-        -----------
-        rank : float, int, or list
-            The rank specification to validate and format
-        matrix_shape : tuple or list
-            The shape of the tensor to be decomposed
-            
-        Returns:
-        --------
-        None, but sets self.rank as a list of integers representing 
-        the validated rank for each dimension
-        
-        Raises:
-        -------
-        ValueError: If rank specification is invalid or incompatible with the tensor shape
-        """
-        if self._rank_validated:
-            return
-        if self.verbose:
-            print(f"Validating rank: {rank}")
-
-        if isinstance(rank, float):
-            if not (0 < rank < 1):
-                raise ValueError(f"Float rank must be between 0 and 1, got {rank}")
-            # find out which rank will give = rank percentage in total based on matrix_shape
-            # count how many non 1 dimensions there are
-            non_one_dims = sum(1 for d in matrix_shape if d != 1)
-            # even_distributed_rank = rank ** (1/non_one_dims)
-            # Handle dimensions of size 1 separately
-            self.rank = []
-            for d in matrix_shape:
-                self.rank.append(max(1, int(rank * d)))
-
-        elif isinstance(rank, int):
-            if rank < 1:
-                raise ValueError(f"Integer rank must be positive, got {rank}")
-            self.rank = [min(rank, d) for d in matrix_shape]
-        elif isinstance(rank, list):
-            # Check if list contains either all floats between 0-1 or all positive integers
-            all_valid_floats = all(isinstance(r, float) and 0 < r < 1 for r in rank)
-            all_valid_ints = all(isinstance(r, int) and r > 0 for r in rank)
-            
-            if not (all_valid_floats or all_valid_ints):
-                raise ValueError("All ranks in list must be either floats between 0 and 1 or positive integers")
-            
-            # If list is longer than matrix_shape, just use the first len(matrix_shape) elements
-            if len(rank) > len(matrix_shape):
-                rank = rank[:len(matrix_shape)]
-                if self.verbose:
-                    print(f"Rank list longer than tensor dimensions, using first {len(matrix_shape)} elements: {rank}")
-            elif len(rank) < len(matrix_shape):
-                raise ValueError(f"Rank list length {len(rank)} is shorter than tensor dimensions {len(matrix_shape)}")
-            
-            if all_valid_floats:
-                # For floats, compute the rank as a percentage of dimension size
-                self.rank = [max(1, int(r * d)) for r, d in zip(rank, matrix_shape)]
-            else:
-                # For integers, just cap at the dimension size
-                self.rank = [min(r, d) for r, d in zip(rank, matrix_shape)]
-        else:
-            raise ValueError(f"Unsupported rank format: {rank}. Must be float, positive int, or list of ints.")
-        
-        if self.verbose:
-            print(f"Validated rank: {self.rank}")
-            print(f"Matrix shape: {matrix_shape}")
-        self._rank_validated = True
-        # what is the total percentage of params in rank vs matrix_shape?
-        self.rank_percentage = sum(self.rank) / sum(matrix_shape)

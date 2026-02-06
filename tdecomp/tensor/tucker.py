@@ -3,7 +3,7 @@ from typing import *
 import tensorly as tl
 
 import tdecomp
-from tdecomp.types import TensorLike, Number
+from tdecomp.types import SVDCallable, TensorDecompositionInit, TensorLike, Number
 from tdecomp._base import TensorDecomposer
 from tdecomp.matrix.decomposer import RandomizedSVD
 from tdecomp.matrix.random_projections import Projector, ProjectorGenerator
@@ -41,7 +41,7 @@ class RPHOSVDDecomposition(TensorDecomposer):
         self.power = power
         self.projector = Projector(random_init)
 
-    def _decompose(self, X: TensorLike, rank: List[int]) -> tuple[TensorLike, ...]:
+    def _decompose(self, X: TensorLike, rank: List[int], **kwargs) -> tuple[TensorLike, list[TensorLike]]:
         
         factor_matrices = []
 
@@ -97,7 +97,7 @@ class RSTHOSVDDecomposition(TensorDecomposer):
             random_init=random_init
         )
     
-    def _decompose(self, X: TensorLike, rank: List[int]) -> tuple[TensorLike, ...]:
+    def _decompose(self, X: TensorLike, rank: List[int], **kwargs) -> tuple[TensorLike, list[TensorLike]]:
         """
         Decompose tensor using R-STHOSVD
         
@@ -154,7 +154,7 @@ class RSTDecomposition(TensorDecomposer):
         return tensor[..., tdecomp.utils.randperm(tensor.shape[-1], tl.context(tensor))[:n]]
         
     
-    def _decompose(self, X: TensorLike, rank: List[int]) -> tuple[TensorLike, ...]:
+    def _decompose(self, X: TensorLike, rank: List[int], **kwargs) -> tuple[TensorLike, list[TensorLike]]:
         """
         Decompose tensor using R-ST algorithm
         
@@ -178,11 +178,49 @@ class RSTDecomposition(TensorDecomposer):
             core_tensor = tl.tenalg.mode_dot(core_tensor, Q_inv, mode_idx)
         
         return core_tensor, factor_matrices
-    
 
+
+class HOOIDecomposition(TensorDecomposer):
+    '''https://arxiv.org/abs/2110.12564
+    
+    References
+    ----------
+    .. [1] tl.G.Kolda and B.W.Bader, "Tensor Decompositions and Applications",
+       SIAM REVIEW, vol. 51, n. 3, pp. 455-500, 2009.
+    '''
+    def __init__(self, 
+                 rank: Optional[Number | List[Number]] = None,
+                 init: TensorDecompositionInit = 'svd',
+                 n_iter_max: int = 100,
+                 svd_type: tl.tenalg.svd.SVD_TYPES | SVDCallable = 'truncated_svd',
+                 ):
+        super().__init__(rank)
+        self.init = init
+        '''How to init core and factors: with default Tucker via SVD and U, via pure random tensors or via passed objects'''
+        self.n_iter_max = n_iter_max
+        '''Iterations for convergens of algorithm'''
+        self.svd_type = svd_type
+        '''SVD used in calculation of ranked U (factors) tensors each iteration in each mode'''
+
+    def decompose(self, 
+                  tensor: TensorLike, 
+                  rank: Optional[Number | List[Number]] = None,
+                  init: Optional[TensorDecompositionInit] = None,
+                  n_iter_max: Optional[int] = None,
+                  svd_type: Optional[tl.tenalg.svd.SVD_TYPES | SVDCallable] = None,
+                  **kwargs
+                  ) -> tuple[TensorLike, list[TensorLike]]:
+        init = init if init is not None else self.init # type: ignore
+        n_iter_max = n_iter_max if n_iter_max is not None else self.n_iter_max
+        svd_type = svd_type if svd_type is not None else self.svd_type # type: ignore
+        return super().decompose(tensor, rank, init=init, n_itermax=n_iter_max, svd_type=svd_type)
+
+    def _decompose(self, X: TensorLike, rank: List[int], **kwargs) -> tuple[TensorLike, list[TensorLike]]:
+        core, factors = tl.decomposition.tucker(X, rank=rank, **kwargs)
+        return core, factors #type: ignore
 
 __local_names = locals()
 
-DECOMPOSERS: Dict[str, TensorDecomposer]= {
+DECOMPOSERS: Dict[str, type[TensorDecomposer]]= {
     name: __local_names[name] for name in __all__
 }

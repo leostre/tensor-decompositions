@@ -17,7 +17,7 @@ __all__ = [
 ]
 
 class SVDDecomposition(Decomposer):
-    def _decompose(self, X: TensorLike, rank) -> tuple[TensorLike, TensorLike, TensorLike]:
+    def _decompose(self, X: TensorLike, rank, **kwargs) -> tuple[TensorLike, TensorLike, TensorLike]:
         """Standart SVD decomposition, realization depends on various backends.  
         Result is non-determenistic, sign of U and V can change in columns together.
 
@@ -46,7 +46,7 @@ class RandomizedSVD(Decomposer):
         return max(1, min(min(tl.shape(W)), int(stable_rank * (1 / self.distortion_factor))))
     
     @_need_t
-    def _decompose_big(self, X: TensorLike, rank: int) -> tuple[TensorLike, TensorLike, TensorLike]:
+    def _decompose_big(self, X: TensorLike, rank: int, **kwargs) -> tuple[TensorLike, TensorLike, TensorLike]:
         P = self.random_init.value(rank, tl.shape(X)[-2], tl.context(X))
         G = tl.matmul(P, tl.matmul(X, tl.matmul(tl.transpose(X), tl.transpose(P))))
         Q, _ = tl.qr(
@@ -57,7 +57,7 @@ class RandomizedSVD(Decomposer):
         return U, S, tl.matmul(Vh, tl.transpose(Q))
         
     @_need_t
-    def _decompose(self, X: TensorLike, rank: int) -> tuple[TensorLike, TensorLike, TensorLike]:
+    def _decompose(self, X: TensorLike, rank: int, **kwargs) -> tuple[TensorLike, TensorLike, TensorLike]:
         G = tl.matmul(X, tl.transpose(X))
         P = self.random_init.value(tl.shape(X)[-1], rank, tl.context(X))
         Q, _ = tl.qr(tl.matmul(G ** self.power, tl.matmul(X, P)), mode='reduced')
@@ -78,7 +78,7 @@ class TwoSidedRandomSVD(RandomizedSVD):
             if not (rank > 0 and (rank & (rank - 1) == 0)):
                 raise ValueError(f"For lean_walsh, rank must be power of 2, got {rank}")
     
-    def _decompose(self, X: TensorLike, rank: int) -> Tuple[TensorLike, TensorLike, TensorLike]:
+    def _decompose(self, X: TensorLike, rank: int, **kwargs) -> Tuple[TensorLike, TensorLike, TensorLike]:
         I, J = tl.shape(X)[-2], tl.shape(X)[-1]
         random_gen: partial[TensorLike] = self.random_init.value
         Omega1 = random_gen(J, rank, tl.context(X))
@@ -122,7 +122,7 @@ class CURDecomposition(Decomposer):
                  random_init = ColumnRowImportancesGenerator.l2_norm):
         super().__init__(random_init=random_init, rank=rank, distortion_factor=distortion_factor)
         
-    def _decompose(self, X: TensorLike, rank: int) -> Tuple[TensorLike, TensorLike, TensorLike]:
+    def _decompose(self, X: TensorLike, rank: int, **kwargs) -> tuple[TensorLike, TensorLike, TensorLike]:
         # create sub matrices for CUR-decompostion
         c, w, r = self.select_rows_cols(X, rank)
         # evaluate pseudoinverse for W - U^-1
