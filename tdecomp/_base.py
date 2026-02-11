@@ -2,10 +2,14 @@ import math
 from typing import List, Optional, Union
 
 import tensorly as tl
-
+tl.set_backend('pytorch') #TODO think about place of it
+import os
+#-----------
+# os.environ["KERAS_BACKEND"] = "torch" #TODO it should be together
+# import keras
+#-------
 import tdecomp
 from tdecomp.types import Number, TensorLike
-tl.set_backend('pytorch') #TODO think about place of it
 
 from functools import wraps
 from abc import ABC, abstractmethod

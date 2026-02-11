@@ -148,6 +148,6 @@ def optional_checkpoint_matmul(a: TensorLike, b: TensorLike, activation_checkpoi
     activation checkpointing.
     """
     if activation_checkpoint:
-        return checkpoint(tl.matmul, a, b) #TODO rewrite on tensorly, hard
+        return checkpoint(tl.matmul, a, b) #TORCH dependent part of code
     else:
         return tl.matmul(a, b)

@@ -1,9 +1,7 @@
-from typing import Any, Callable, Literal, Union
+from typing import Any, Callable, Literal, TypeAlias, Union
 import tensorly as tl
 
-
-class TensorLike(Any):
-    pass
+type TensorLike = Any
 '''Tensorly supports work with different tensor backends (numpy, torch.tensor and so on), 
 but it doesnt describe abstract class for it. 
 So the tensor can be of `Any` type depending on backend setted in `tl.set_backend` .'''

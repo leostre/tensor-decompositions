@@ -217,7 +217,7 @@ class HOOIDecomposition(TensorDecomposer):
 
     def _decompose(self, X: TensorLike, rank: List[int], **kwargs) -> tuple[TensorLike, list[TensorLike]]:
         core, factors = tl.decomposition.tucker(X, rank=rank, **kwargs)
-        return core, factors #type: ignore
+        return core, factors
 
 __local_names = locals()
 

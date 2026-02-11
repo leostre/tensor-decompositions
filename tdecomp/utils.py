@@ -1,13 +1,13 @@
 from functools import partial, wraps
 from typing import Callable, Optional
 
+import tensorflow as tf
 import torch
 import tensorly as tl
 
 from torch.ao.quantization.utils import _normalize_kwargs
 
 from tdecomp.types import TensorLike
-
 __all__ = [
     'filter_kw_universal',
     'conjugate_gradient',
@@ -159,9 +159,13 @@ def no_grad(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         backend = tl.get_backend()
-        if backend == "pytorch":
+        if backend == "pytorch": #TODO refactor? on KERAS_BACKEND (os.environ["KERAS_BACKEND"] = "torch")
             with torch.no_grad():
                 return func(*args, **kwargs)
+        elif backend == "tensorflow":
+            with tf.GradientTape() as t:
+                with t.stop_recording():
+                    return func(*args, **kwargs)
         elif backend == "numpy":
             return func(*args, **kwargs)
         else:

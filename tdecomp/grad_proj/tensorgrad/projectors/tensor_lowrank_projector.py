@@ -1,18 +1,13 @@
 from typing import *
 
-import torch
 import tensorly as tl
-from tensorly import tenalg 
 from torch.autograd.profiler import record_function
 
-from tensorly.tenalg.core_tenalg.n_mode_product import multi_mode_dot
-
 import tdecomp
-from tdecomp._base import TensorDecomposer
 from tdecomp.grad_proj.tensorgrad.projectors.update_gap_scheduler import UpdateGapScheduler
 from tdecomp.tensor.tucker import HOOIDecomposition
 from tdecomp.types import TensorLike
-import tdecomp.types
+import torch
 
 
 class TensorGradLowRankProjector:
@@ -62,14 +57,13 @@ class TensorGradLowRankProjector:
             if self.proj_tensor is None or self.should_update_projector(iter):
                 self.proj_tensor = self.get_projection_tensor(full_rank_grad)
                 self.num_updates += 1
-            if self.proj_tensor[0].device != full_rank_grad.device:
-                self.proj_tensor = [f.to(full_rank_grad.device) for f in self.proj_tensor]
-            self.num_steps = iter
 
+            self.num_steps = iter
             return self.transform(self.proj_tensor, full_rank_grad)
 
+    @tdecomp.utils.no_grad
     def project_back(self, low_rank_grad, output_buffer=None, alpha=1.0, accumulate=False):
-        with torch.no_grad(), record_function("#### TENSOR_GRAD_PROJECT_BACK"):
+        with record_function("#### TENSOR_GRAD_PROJECT_BACK"):
             # If out is provided, use it as the output buffer
             if output_buffer is not None:
                 # Apply inverse transform with the provided buffer
@@ -82,33 +76,30 @@ class TensorGradLowRankProjector:
     
     
     # Tucker decomp: higher-order SVD
-    def get_projection_tensor(self, weights: TensorLike) -> list[TensorLike]: #TODO вынести в tucker.py и проверки и логику, 
+    def get_projection_tensor(self, weights: TensorLike) -> list[TensorLike]:
         matrix = weights
         original_dtype = tl.context(matrix)["dtype"]
                 
         # Always use full precision for tucker decomposition
-        tdecomp.utils.is_complex(matrix)
         if tdecomp.utils.is_complex(matrix):
-            if tl.context(matrix)["dtype"] is not tdecomp.types.COMPLEX64_TYPE:
-                matrix = tl.tensor(matrix, dtype=tdecomp.types.COMPLEX64_TYPE)
+            if tl.context(matrix)["dtype"] is not torch.complex64:
+                matrix = tl.tensor(matrix, dtype=torch.complex64)
             
             
         # Handle initialization with warm restart
         if self.warm_restart and self.proj_tensor is not None:
             # Convert factors to full precision temporarily for initialization
-            # check if on same device as matrix
+            # check if on same device as matrix (upd: dont check on keras!)
             factors = self.proj_tensor
-            if factors[0].device != matrix.device:
-                factors = [f.to(matrix.device) for f in factors]
             # check if full precision if not convert to full precision - check if complex32
-            if torch.is_complex(factors[0]) and factors[0].dtype == torch.complex32:
+            if tdecomp.utils.is_complex(factors[0]) and factors[0].dtype == torch.complex32:
                 factors = [f.to(torch.complex64) for f in factors]
             
             self.tensor_decomposer.init = tl.tenalg.multi_mode_dot(matrix, factors, transpose=True), factors
             
         try:
             _, factors = self.tensor_decomposer.decompose(matrix)
-            torch.cuda.empty_cache()
+            torch.cuda.empty_cache() #keras.backend.clear_session()
         except Exception as e:
             if self.verbose:
                 print(f"Tucker decomposition failed with warm start, trying again with SVD init: {str(e)}")
@@ -118,21 +109,23 @@ class TensorGradLowRankProjector:
                 _, factors = self.tensor_decomposer.decompose(matrix, init='svd', n_iter_max=self.n_iter_max * 2, svd_type='randomized_svd') # try again
             except Exception as e:
                 raise e
-        torch.cuda.empty_cache()
+        torch.cuda.empty_cache() #keras.backend.clear_session()
         
         # Convert factors to half precision if mixed precision is enabled
         factors = [f.to(original_dtype) for f in factors]
         
         return factors
     
-    def transform(self, proj_tensor, full_rank_grad):
-        with torch.no_grad(), record_function("### TENSOR_GRAD_TRANSFORM"):
-            return multi_mode_dot(full_rank_grad, proj_tensor, transpose=True)
+    @tdecomp.utils.no_grad
+    def transform(self, proj_tensor: list[TensorLike], full_rank_grad: TensorLike) -> TensorLike:
+        with record_function("### TENSOR_GRAD_TRANSFORM"):
+            return tl.tenalg.multi_mode_dot(full_rank_grad, proj_tensor, transpose=True)
 
-    def inverse_transform(self, proj_tensor, x, output_buffer=None, alpha=1.0):
-        with torch.no_grad(), record_function("### TENSOR_GRAD_INV_TRANSFORM"):
+    @tdecomp.utils.no_grad
+    def inverse_transform(self, proj_tensor: TensorLike, x: TensorLike, output_buffer: Optional[torch.Tensor] = None, alpha=1.0) -> TensorLike:
+        with record_function("### TENSOR_GRAD_INV_TRANSFORM"):
             if output_buffer is None:
-                return multi_mode_dot(x, proj_tensor)
+                return tl.tenalg.multi_mode_dot(x, proj_tensor)
             else:
                 result = multi_mode_dot(x, proj_tensor)
                 output_buffer.add_(result, alpha=alpha)
