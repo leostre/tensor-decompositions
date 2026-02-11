@@ -1,13 +1,12 @@
 from typing import Literal
 
-import tdecomp
+from tdecomp.grad_proj.tensorgrad.config import SparseType
+from tdecomp.grad_proj.tensorgrad.projectors.abstract_sparce_projector import AbstractSparceProjector
 from tdecomp.grad_proj.tensorgrad.projectors.update_gap_scheduler import UpdateGapScheduler
 from tdecomp.types import TensorLike
 import tensorly as tl
 
-import tdecomp.types
-
-class GaLoreSparseProjector:
+class GaLoreSparseProjector(AbstractSparceProjector):
     """
     A sparse version of GaLore that uses row/column sampling
     instead of low-rank SVD. It follows the same signature
@@ -16,7 +15,7 @@ class GaLoreSparseProjector:
     def __init__(
         self,
         sparse_ratio: float = 0.25,
-        sparse_type: Literal['topk', 'randk', 'randomk', 'probablility'] = "topk",
+        sparse_type: SparseType = "topk",
         verbose: bool = False,
         update_gap_scheduler: UpdateGapScheduler = UpdateGapScheduler(100, 1000),
         scale: float = 1.0,
@@ -25,7 +24,7 @@ class GaLoreSparseProjector:
     ):
         self.sparse_ratio = sparse_ratio
         '''fraction of rows (or columns) to keep'''
-        self.sparse_type = sparse_type
+        self.sparse_type: SparseType = sparse_type
         '''e.g. 'topk', 'randK', 'probability' - how to finnaly chose random columns or rows by their importances'''
         self.verbose = verbose
         self.update_gap_scheduler = update_gap_scheduler
@@ -101,31 +100,31 @@ class GaLoreSparseProjector:
             if tl.shape(grad_2d)[0] >= tl.shape(grad_2d)[1]:
                 # we used columns
                 mask = self._mask
-                tl.index_update(grad_2d, tl.index[:, mask], low_rank_grad)
+                grad_2d = tl.index_update(grad_2d, tl.index[:, mask], low_rank_grad)
             else:
                 # we used rows
                 mask = self._mask
-                tl.index_update(grad_2d, tl.index[mask, :], low_rank_grad)
+                grad_2d = tl.index_update(grad_2d, tl.index[mask, :], low_rank_grad)
 
         elif self.proj_type == 'reverse_std':
             if tl.shape(grad_2d)[0] >= tl.shape(grad_2d)[1]:
                 # we used rows
                 mask = self._mask
-                tl.index_update(grad_2d, tl.index[mask, :], low_rank_grad)
+                grad_2d = tl.index_update(grad_2d, tl.index[mask, :], low_rank_grad)
             else:
                 # columns
                 mask = self._mask
-                tl.index_update(grad_2d, tl.index[:, mask], low_rank_grad)
+                grad_2d = tl.index_update(grad_2d, tl.index[:, mask], low_rank_grad)
 
         elif self.proj_type == 'right':
             # columns
             mask = self._mask
-            tl.index_update(grad_2d, tl.index[:, mask], low_rank_grad)
+            grad_2d = tl.index_update(grad_2d, tl.index[:, mask], low_rank_grad)
 
         elif self.proj_type == 'left':
             # rows
             mask = self._mask
-            tl.index_update(grad_2d, tl.index[mask, :], low_rank_grad)
+            grad_2d = tl.index_update(grad_2d, tl.index[mask, :], low_rank_grad)
 
         else:
             raise ValueError(f"Unknown proj_type={self.proj_type}")
@@ -168,19 +167,4 @@ class GaLoreSparseProjector:
         k = max(1, int(self.sparse_ratio * dim_size))
         
         # pick indices
-        if self.sparse_type.lower() == 'topk':
-            idxs = tl.argsort(norms, 0)[-k:]
-
-        elif self.sparse_type.lower() in ('randk', 'randomk'):
-            idxs = tdecomp.utils.randperm(dim_size, tl.context(grad_2d))[:k]
-
-        elif self.sparse_type.lower() == 'probability':
-            idxs = tdecomp.utils.multinomial(norms, k, tl.context(grad_2d))
-
-        else:
-            raise ValueError(f"Unknown sparse_type={self.sparse_type}")
-        
-        mask = tl.zeros(dim_size, **tl.context(grad_2d))
-        mask = tl.tensor(mask, dtype=tdecomp.types.BOOL_TYPE)
-        tl.index_update(mask, tl.index[idxs], True)
-        return mask
+        return self._create_sparse_mask(norms, self.sparse_type.lower(), k, tl.context(grad_2d)) #type: ignore

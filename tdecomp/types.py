@@ -1,4 +1,4 @@
-from typing import Any, Callable, Literal, TypeAlias, Union
+from typing import Any, Callable, Literal, Union
 import tensorly as tl
 
 type TensorLike = Any

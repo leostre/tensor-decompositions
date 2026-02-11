@@ -7,7 +7,7 @@ import tensorly as tl
 
 from torch.ao.quantization.utils import _normalize_kwargs
 
-from tdecomp.types import TensorLike
+from tdecomp.types import TensorLike, BOOL_TYPE
 __all__ = [
     'filter_kw_universal',
     'conjugate_gradient',
@@ -173,16 +173,32 @@ def no_grad(func):
     
     return wrapper
 
+def topk_ids(x: TensorLike, k: int) -> TensorLike:
+    '''Returns indices of topk elements in ascending order of elements'''
+    return tl.argsort(x, 0)[-k:]
+
+def bool_mask(shape: int | tuple[int], context: dict = {}) -> TensorLike:
+    context["dtype"] = BOOL_TYPE
+    return tl.zeros(shape, **context)
+
+def numel(x: TensorLike) -> TensorLike:
+    '''
+    Returns:
+        tensor: permutation of all x shapes packed in tensor
+    '''
+    return tl.prod(tl.tensor(tl.shape(x)))
+
 
 def multinomial(weights: TensorLike, k: int, context={}) -> TensorLike:
     """
-    Efraimidis–Spirakis algorithm (A-Res) for weighted sampling without replacement.
+    Efraimidis–Spirakis algorithm (A-Res) for weighted sampling without replacement (replacement=False).
     For each element with weight w_i: key_i = u_i^(1/w_i) where u_i ~ Uniform(0,1).
     Select k elements (indexes) with largest keys.
     
-    weights: 1D tensorly tensor of non-negative weights (not necessarily normalized).
-    k: number of samples.
-    context: tensorly context dict.
+    Args:
+        weights: 1D tensorly tensor of non-negative weights (<b>not necessarily normalized</b>).
+        k: number of samples.
+        context: tensorly context dict.
     """
 
     # Efraimidis–Spirakis: key_i = u_i^(1/w_i) or the same as exp(log(u_i^(1/w_i))) -> log(u_i)/w_i

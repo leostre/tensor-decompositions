@@ -87,10 +87,10 @@ def sparse_jl_matrix(d: int, k: int, s: int = 3, context: dict = _default_contex
     #cols = torch.repeat_interleave(tl.arange(k), s) - analogue
     for i in range(1, k):
         for j in range(s):
-            tl.index_update(cols, tl.index[s * i + j], i)
+            cols = tl.index_update(cols, tl.index[s * i + j], i)
     
     R = tl.zeros((d, k))
-    tl.index_update(R, tl.index[rows, cols], tl.reshape(values, (-1,)))
+    R = tl.index_update(R, tl.index[rows, cols], tl.reshape(values, (-1,)))
     
     return R
 
@@ -151,8 +151,8 @@ def lean_walsh(d: int, k: int, context: dict = _default_context) -> TensorLike:
             break
         even = h[..., :half]
         odd = h[..., half:]
-        tl.index_update(h, tl.index[..., :half], even + odd)
-        tl.index_update(h, tl.index[..., half:], even - odd)
+        h = tl.index_update(h, tl.index[..., :half], even + odd)
+        h = tl.index_update(h, tl.index[..., half:], even - odd)
     
     h = tl.reshape(h, (k, k))
     H = h * (1.0 / math.sqrt(k))
