@@ -123,7 +123,7 @@ class TensorGradSparseProjector(AbstractSparceProjector):
 
             k = max(1, int(ratio * dim_size + 1))
 
-            mask = self._create_sparse_mask(row_norms, self.sparse_type.lower(), k, tl.context(tensor)) #type: ignore
+            mask, _ = self._create_sparse_mask(row_norms, self.sparse_type.lower(), k, tl.context(tensor)) #type: ignore
 
             # Keep mask on GPU
             masks.append(mask)

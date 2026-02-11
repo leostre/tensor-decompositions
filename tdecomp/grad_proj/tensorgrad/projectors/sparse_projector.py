@@ -167,4 +167,4 @@ class GaLoreSparseProjector(AbstractSparceProjector):
         k = max(1, int(self.sparse_ratio * dim_size))
         
         # pick indices
-        return self._create_sparse_mask(norms, self.sparse_type.lower(), k, tl.context(grad_2d)) #type: ignore
+        return self._create_sparse_mask(norms, self.sparse_type.lower(), k, tl.context(grad_2d))[0] #type: ignore

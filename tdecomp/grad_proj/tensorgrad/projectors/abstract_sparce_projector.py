@@ -6,12 +6,12 @@ import tensorly as tl
 
 class AbstractSparceProjector:
     def _create_sparse_mask(self, scores: TensorLike, sparse_type: SparseType, k: int, context: dict = {}) -> TensorLike:
-        '''Creates mask from given row/column scores/weights/norms with k True values
+        """Creates mask from given row/column scores/weights/norms with k True values
         
         Returns:
             mask: mask of len(scores)
-
-        '''
+            idxs: chosen k random indices (order not guaranteed)
+        """
         dim_size = tl.shape(scores)
         if sparse_type == 'topk':
             idxs = tdecomp.utils.topk_ids(scores, k)
@@ -27,4 +27,4 @@ class AbstractSparceProjector:
         
         mask = tdecomp.utils.bool_mask(dim_size, context)
         mask = tl.index_update(mask, tl.index[idxs], True)
-        return mask
+        return mask, idxs
