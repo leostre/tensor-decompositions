@@ -21,6 +21,8 @@ classifiers = [
 ]
 
 dependencies = [
+    "matplotlib>=3.7.5",
+    "tensorflow>=2.13.1",
     "tensorly",  # Fixed: removed invalid wildcard
     "torch",     # Fixed: removed invalid wildcard
 ]
@@ -35,3 +37,15 @@ Homepage = "https://github.com/leostre/tensor-decompositions.git"
 [tool.setuptools.packages.find]
 include = ["tdecomp*"]  # Include tdecomp and all subpackages
 exclude = ["tests*", "experiments*"]  # Exclude test/experiment packages
+
+[dependency-groups]
+experiments = [
+    "accelerate>=1.0.1",
+    "datasets>=3.1.0",
+    "evaluate>=0.4.6",
+    "ipykernel>=6.29.5",
+    "mlflow[auth]>=2.17.2",
+    "nvidia-ml-py>=13.590.48",
+    "scikit-learn>=1.3.2",
+    "transformers>=4.46.3",
+]

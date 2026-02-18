@@ -1,6 +1,13 @@
 from typing import Any, Callable, Literal, Union
 import tensorly as tl
 
+tl.set_backend('pytorch') #TODO think about place of it
+# import os
+#-----------
+# os.environ["KERAS_BACKEND"] = "torch" #TODO it should be together
+# import keras
+#-------
+
 type TensorLike = Any
 '''Tensorly supports work with different tensor backends (numpy, torch.tensor and so on), 
 but it doesnt describe abstract class for it. 
