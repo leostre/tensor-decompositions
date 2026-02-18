@@ -1,0 +1,26 @@
+services:
+  tdecomp:
+    build: .
+    volumes:
+      - .:/tdecomp
+    image: tdecomp:latest
+    container_name: tdecomp-container
+    # command: /bin/sh
+    #entrypoint: /bin/bash
+    stdin_open: true #-i
+    tty: true #-t
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]
+              capabilities: ["gpu"]
+              # count: 1
+    networks: #for ml-flow
+      - external-network
+
+networks:
+  external-network:
+    driver: bridge
+    name: tdecomp-network

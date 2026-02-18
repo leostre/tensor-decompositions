@@ -20,7 +20,7 @@ def setup_optimizer_and_scheduler(config, model: torch.nn.Module, logging_name):
     ]     
     # First parameter is usually the lifting layer, we don't want to apply tensorgrad to it
     if len(tensorgrad_params) > 0:
-        tensorgrad_params.pop(0)
+        tensorgrad_params.pop(0) #TODO бред???      
     ndim2group = {}
     for i in range(2, 6):
         ndim2group[i] = [
@@ -30,7 +30,7 @@ def setup_optimizer_and_scheduler(config, model: torch.nn.Module, logging_name):
         i: {id(p) for p in ps} for i, ps in ndim2group.items()
     }
 
-    regular_parameters = []
+    regular_parameters = [] #ndim = 1
     for p in model.parameters():
         idp = id(p)
         registered = any(idp in group for group in ndim2id.values())

@@ -42,7 +42,7 @@ class TensorGRaD(Optimizer):
     """
     def __init__(
         self,
-        params: Iterable[nn.parameter.Parameter],
+        param_grps: Iterable[nn.parameter.Parameter],
         lr: float = 1e-3,
         betas: Tuple[float, float] = (0.9, 0.999),
         eps: float = 1e-6,
@@ -71,7 +71,7 @@ class TensorGRaD(Optimizer):
             "weight_decay": weight_decay,
             "correct_bias": correct_bias
         }
-        super().__init__(params, defaults)
+        super().__init__(param_grps, defaults)
         self.matrix_only = matrix_only
         self.enforce_full_complex_precision = enforce_full_complex_precision
         self.support_complex = support_complex

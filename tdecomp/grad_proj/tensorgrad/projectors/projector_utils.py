@@ -103,7 +103,7 @@ def _create_composite_projectors(group, update_gap_scheduler, matrix_only, suppo
     # If optimizer_type is tensorgrad_sum, ensure smaller projector is first
     if group.get('optimizer_type', 'adam') == 'tensorgrad_sum':
         try:
-            if sizes[1] < sizes[0]:
+            if sizes[1] < sizes[0]: #TODO WHATS GOING ON???? WE CANT COMPARE RANK AND SPARCE RATIO
                 proj_types = proj_types[::-1]
                 prefixes = prefixes[::-1]
                 print("    => Swapping projectors to ensure smaller one is first")
