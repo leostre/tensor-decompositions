@@ -205,6 +205,13 @@ def multinomial(weights: TensorLike, k: int, context={}) -> TensorLike:
     eps = 1e-12
     u = tl.random.random_tensor(tl.shape(weights), **context)
     u = tl.log2(u) / (weights + eps)
-    
     # Select k elements with largest keys
     return tl.argsort(u, 0)[-k:]
+
+def svdvals(x: TensorLike) -> TensorLike:
+    '''Returns list of singular values'''
+    if tl.get_backend() == "pytorch":
+        return torch.linalg.svdvals(x)
+    else:
+        #slover version via full svd
+        return tl.truncated_svd(x, n_eigenvecs=min(tl.shape(x)))[1]

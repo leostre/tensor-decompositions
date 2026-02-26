@@ -41,7 +41,7 @@ class RandomizedSVD(Decomposer):
         self.power = power
 
     def estimate_stable_rank(self, W: TensorLike) -> int:
-        svals_squared = tl.truncated_svd(W, n_eigenvecs=min(tl.shape(W)))[1] ** 2 #NOTE вычисляется полный SVD - нет смысла в этом, если вдруг не передадим rank в decompose()
+        svals_squared = tdecomp.utils.svdvals(W) ** 2
         stable_rank = (tl.sum(svals_squared) / tl.max(svals_squared))
         return max(1, min(min(tl.shape(W)), int(stable_rank * (1 / self.distortion_factor))))
     
