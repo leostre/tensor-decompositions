@@ -1,3 +1,4 @@
+#RUN WITH 'GPU_IDS=0 docker compose up'
 services:
   tdecomp:
     build: .
@@ -14,7 +15,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["1"]
+              device_ids: ["${GPU_IDS:-0}"]
               capabilities: ["gpu"]
               # count: 1
     networks: #for ml-flow
