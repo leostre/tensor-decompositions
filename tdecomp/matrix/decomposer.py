@@ -119,7 +119,7 @@ class CURDecomposition(Decomposer):
     """
 
     def __init__(self, rank: Optional[Number] = None, distortion_factor: float = 0.6, 
-                 random_init = ColumnRowImportancesGenerator.l2_norm):
+                 random_init: ColumnRowImportancesGenerator = ColumnRowImportancesGenerator.l2_norm):
         super().__init__(random_init=random_init, rank=rank, distortion_factor=distortion_factor)
         
     def _decompose(self, X: TensorLike, rank: int, **kwargs) -> tuple[TensorLike, TensorLike, TensorLike]:

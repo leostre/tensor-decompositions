@@ -2,6 +2,8 @@ Metadata-Version: 2.4
 Name: tdecomp
 Version: 0.2.4
 Summary: Library for tensor and matrix decompositions applications
+Home-page: https://github.com/leostre/tensor-decompositions.git
+Author: Leon Strelkov
 Author-email: Leon Strelkov <strelllleo@mail.ru>
 Project-URL: Homepage, https://github.com/leostre/tensor-decompositions.git
 Keywords: tensor decompositions,matrix decompositions,randomized algorithms
@@ -11,8 +13,13 @@ Classifier: Programming Language :: Python :: 3.9
 Classifier: Programming Language :: Python :: 3.10
 Requires-Python: >=3.8
 Description-Content-Type: text/markdown
+Requires-Dist: matplotlib>=3.7.5
+Requires-Dist: tensorflow>=2.13.1
 Requires-Dist: tensorly
 Requires-Dist: torch
+Dynamic: author
+Dynamic: home-page
+Dynamic: requires-python
 
 # tensor-decompositions
 

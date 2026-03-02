@@ -130,7 +130,7 @@ class ExperimentRunner:
                             try:
                                 decomposer = method(**method_kwargs)
                                 U, S, Vh = decomposer.decompose(X)
-                                X_approx = decomposer._two_sided_compose(U, S, Vh)
+                                X_approx = decomposer.compose(U, S, Vh)
                                 
                                 del decomposer, U, Vh
                             except RuntimeError as e:

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional, Literal, Union, List
+from typing import Optional, Literal, TypeAlias
 
 @dataclass
 class DataConfig:
@@ -7,8 +7,8 @@ class DataConfig:
     n_train: int = None
     tmp_dir: str = "/tmp/t2t_datagen"  # From tensor2tensor example :cite[4]
 
-type Galore2DProjectionSide = Literal["right", "left", "full"]
-type SparseType = Literal['topk', 'randk', 'randomk', 'probablility']
+Galore2DProjectionSide: TypeAlias = Literal["right", "left", "full"]
+SparseType: TypeAlias = Literal['topk', 'randk', 'randomk', 'probablility']
 '''Determine how to extract random columns/rows by scores'''
 
 @dataclass

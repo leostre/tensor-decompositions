@@ -1,4 +1,4 @@
-from typing import Any, Callable, Literal, Union
+from typing import Any, Callable, Literal, TypeAlias, Union
 import tensorly as tl
 
 tl.set_backend('pytorch') #TODO think about place of it
@@ -8,7 +8,7 @@ tl.set_backend('pytorch') #TODO think about place of it
 # import keras
 #-------
 
-type TensorLike = Any
+TensorLike: TypeAlias = Any
 '''Tensorly supports work with different tensor backends (numpy, torch.tensor and so on), 
 but it doesnt describe abstract class for it. 
 So the tensor can be of `Any` type depending on backend setted in `tl.set_backend` .'''
@@ -16,10 +16,10 @@ So the tensor can be of `Any` type depending on backend setted in `tl.set_backen
 Number = Union[int, float]
 '''Type, widely used for 'rank' typing'''
 
-type TensorDecompositionInit = tuple[TensorLike, list[TensorLike]] | Literal['svd', 'random']
+TensorDecompositionInit: TypeAlias = tuple[TensorLike, list[TensorLike]] | Literal['svd', 'random']
 '''Used in iterative tensor decomposition algorithms to determine (start factorization)/(algorithm for start factorization) that will be optimized'''
 
-type SVDCallable = Callable[[TensorLike], tuple[TensorLike, TensorLike, TensorLike]]
+SVDCallable: TypeAlias = Callable[[TensorLike], tuple[TensorLike, TensorLike, TensorLike]]
 
 BOOL_TYPE = tl.tensor([True]).dtype
 COMPLEX64_TYPE = tl.backend.complex64

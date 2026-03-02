@@ -74,7 +74,7 @@ def ridge_leverage(
         
         # 1. Col Scores: diag(X^T M_inv X)
         XtM = tl.matmul(Xt, M_inv) # n x m
-        col_scores = tl.matmul(XtM, X).sum(dim=1) #TODO проверить короче, мб дело в sum
+        col_scores = tl.matmul(XtM, X).sum(dim=1)
         
         # 2. Row Scores: diag( 1/lam * (G - G M_inv G) ) где G = XXt
         term2 = tl.matmul(XXt, tl.matmul(M_inv, XXt))

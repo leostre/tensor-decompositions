@@ -119,7 +119,7 @@ class TensorGradUnstructuredProjector(AbstractSparceProjector):
                 # Ensure consistent dtype between small_grad and output_buffer
                 if tl.context(small_grad)["dtype"] != tl.context(output_buffer)["dtype"]:
                     if self.verbose:
-                        print(f"Converting small_grad from {tl.context(small_grad)["dtype"]} to {tl.context(output_buffer)["dtype"]} for consistency")
+                        print(f'Converting small_grad from {tl.context(small_grad)["dtype"]} to {tl.context(output_buffer)["dtype"]} for consistency')
                     small_grad = tl.tensor(small_grad, **tl.context(output_buffer))
             
             # Scale values once (combining alpha and scale_factor)

@@ -37,7 +37,7 @@ class RPHOSVDDecomposition(TensorDecomposer):
                  distortion_factor: float = 0.6,
                  power: int = 3,
                  random_init: ProjectorGenerator = ProjectorGenerator.normal):
-        super().__init__(rank=rank, distortion_factor=distortion_factor, random_init=random_init)
+        super().__init__(rank=rank, random_init=random_init)
         self.power = power
         self.projector = Projector(random_init)
 
@@ -88,7 +88,7 @@ class RSTHOSVDDecomposition(TensorDecomposer):
                  power_iteration: int = 2,
                  distortion_factor: float = 0.1,
                  random_init: ProjectorGenerator = ProjectorGenerator.normal):
-        super().__init__(rank=rank, distortion_factor=distortion_factor, random_init=random_init)
+        super().__init__(rank=rank, random_init=random_init)
         self.oversampling = oversampling
         self.power_iteration = power_iteration
         self.rsvd = RandomizedSVD(
@@ -145,7 +145,7 @@ class RSTDecomposition(TensorDecomposer):
                  sampling_method: str = 'norm_based',
                  distortion_factor: float = 0.6,
                  random_init: ProjectorGenerator = ProjectorGenerator.normal):
-        super().__init__(random_init=random_init, rank=rank, distortion_factor=distortion_factor)
+        super().__init__(random_init=random_init, rank=rank)
         self.rsvd = RandomizedSVD(
             None, distortion_factor=distortion_factor, random_init=random_init
         )
