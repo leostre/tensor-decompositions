@@ -122,44 +122,91 @@ class PerplexityCallback(TrainerCallback):
             mlflow.log_metrics({self.log_key: ppl}, step=int(state.global_step))
 
 
-class MlflowMetricsPandasConverter:
-    def __init__(self, mlFlowClient: mlflow.MlflowClient):
-        self.mlFlowClient = mlFlowClient
+class PreciseMemoryCallback(TrainerCallback):
+    def __init__(self, prefix="mem"):
+        self.prefix = prefix
+        self.g = None
 
-    def get_metrics_from_run(self, run_id: str, main_metric="loss", include_parameters=[]) -> pd.DataFrame:
-        '''main_metric - metric that defines amount of steps in result dataframe'''
-        run_example = self.mlFlowClient.get_run(run_id)
-        metric_names = list(run_example.data.metrics.keys())
-        df = pd.DataFrame({"step": [m.step for m in self.mlFlowClient.get_metric_history(run_id, main_metric)]})
-        # print(df)
-        for metric_name in metric_names:
-            metric_log = self.mlFlowClient.get_metric_history(run_id, metric_name)
-            metric_df = pd.DataFrame([{"step": m.step, metric_name: m.value} for m in metric_log])
-            df = df.merge(metric_df, on="step", how="left")
+    @staticmethod
+    def _nbytes(t):
+        return t.numel() * t.element_size()
 
-        if (len(include_parameters) > 0):
-            df_stats = pd.DataFrame([self.mlFlowClient.get_run(run_id).data.params] * len(df))
-            df_stats = df_stats[include_parameters]
-            df = pd.concat([df, df_stats], axis=1)
+    def on_step_begin(self, args, state, control, model=None, **kwargs):
+        if model is not None and torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats(next(model.parameters()).device)
         
-        return df
 
-    def get_metrics_from_all_experiment_runs(self, experiment_id, filter_string='', include_parameters=[]) -> pd.DataFrame:
-        '''It suppoused, that all exepiments with equal metric columns'''
-        runs = self.mlFlowClient.search_runs(experiment_id, filter_string=filter_string)
-        combined_df = pd.DataFrame()
-        for run in runs:
-            df = self.get_metrics_from_run(run.info.run_id, include_parameters = include_parameters)
-            df["run_id"] = run.info.run_id
+    def on_pre_optimizer_step(self, args, state, control, model=None, optimizer=None, **kwargs):
+        if state.global_step != 2:
+            #measure only once, because values are const (except activations)
+            return
 
-            combined_df = pd.concat([combined_df, df])
-        return combined_df
+        w = sum(self._nbytes(p) for p in model.parameters())
+        g = sum(self._nbytes(p.grad) for p in model.parameters() if p.grad is not None)
+
+        opt_total, opt_cuda = 0, 0
+        for st in optimizer.state.values():
+            # there will be M, V of Adam for every p in parameters() and it x2 because of first_proj, second_proj
+            for v in st.values():
+                if torch.is_tensor(v):
+                    b = self._nbytes(v)
+                    opt_total += b
+                    if v.is_cuda:
+                        opt_cuda += b
+
+        metrics = {
+            f"{self.prefix}_weights_mb": w / 1024**2,
+            f"{self.prefix}_grads_mb": g / 1024**2,
+            f"{self.prefix}_opt_state_mb": opt_total / 1024**2,
+        }
+
+        if torch.cuda.is_available():
+            dev = next(model.parameters()).device
+            alloc = torch.cuda.memory_allocated(dev)
+            peak = torch.cuda.max_memory_allocated(dev)
+            activ_est = max(0, alloc - (w + g + opt_cuda))
+            activ_peak_est = max(0, peak - (w + g + opt_cuda))
+            metrics.update({
+                f"{self.prefix}_activations_estimate_mb": activ_est / 1024**2,
+                f"{self.prefix}_activations_peak_during_one_step_est_mb": activ_peak_est / 1024**2,
+            })
+
+        mlflow.log_params(metrics)
+
+
+def print_param_shapes(optimizer, only_group_index=None):
+    if (only_group_index is not None):
+        [print(tens.shape) for tens in optimizer.param_groups[only_group_index]['params']]
+        print(len(optimizer.param_groups[only_group_index]['params']))
+        return
+    for i, param_group in enumerate(optimizer.param_groups):
+        print("group", i)
+        [print(tens.shape) for tens in param_group['params']]
+        print(len(param_group['params']))
+
+def get_batch_size_mb(batch_encoding: dict):
+    """Получить размер BatchEncoding в МБ (суммирует все тензоры)
+    Args:
+        batch_encoding: состоит из input_ids, attention_mask, labels
+    """
+    total_bytes = sum(
+        v.numel() * v.element_size() 
+        for v in batch_encoding.values() 
+        if torch.is_tensor(v)
+    )
+    return total_bytes / (1024 ** 2)
+
+def get_model_size_mb(model):
+    """Подсчитать примерный размер весов модели в МБ"""
+    total_params = 0
+    total_bytes = 0
     
-    def get_last_metrics_from_all_experiment_runs(self, experiment_id, filter_string='') -> pd.DataFrame:
-        runs = self.mlFlowClient.search_runs(experiment_id, filter_string=filter_string)
-        combined_df = pd.DataFrame()
-        for run in runs:
-            df = pd.DataFrame([self.mlFlowClient.get_run(run.info.run_id).data.metrics])
-            df.insert(0, "run_id", [run.info.run_id])
-            combined_df = pd.concat([combined_df, df])
-        return combined_df
+    for param in model.parameters():
+        num_params = param.numel()
+        param_bytes = num_params * param.element_size()
+        total_params += num_params
+        total_bytes += param_bytes
+    
+    size_mb = total_bytes / (1024 ** 2)
+    
+    return size_mb

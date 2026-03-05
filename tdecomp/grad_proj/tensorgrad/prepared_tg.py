@@ -25,7 +25,7 @@ class ParallelTG(TensorGRaD):
             scheduler=scheduler,
             rank=rank[0],
             optimizer_type='tensorgrad_sum',
-            sparse_ratio = rank[-1]
+            second_sparse_ratio = rank[-1]
         ) | kwargs
         config = TensorGRaDConfig(
             DataConfig(**_normalize_kwargs(DataConfig.__init__, parameters)),

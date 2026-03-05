@@ -122,7 +122,7 @@ class TensorGRaD(Optimizer):
         return exp_avg / denom, step_size
 
     @torch.no_grad()
-    def step(self, closure: Callable = None):
+    def step(self, closure: Callable = None, save_grad_for_tracing: torch.Tensor = None, p_for_tracing: torch.Tensor = None):
         """
         Performs a single optimization step.
         """
@@ -250,6 +250,15 @@ class TensorGRaD(Optimizer):
                         first_grad, state["first_exp_avg"], state["first_exp_avg_sq"], 
                         beta1, beta2, group["eps"], state["step"]
                     )
+                    #--------- for debug and check errors by glazkov
+                    if (p is p_for_tracing):
+                        print("its match")
+                        print("shape", p.shape)
+                        print("second (low rank?) grad shape (compressed)", second_grad.shape)
+                        print("step size", step_size)
+                        save_grad_for_tracing.add_(state["second_proj"].project_back(second_grad))
+                    #---------------
+
                     norm_second, _ = self._adam_update(
                         second_grad, state["second_exp_avg"], state["second_exp_avg_sq"], 
                         beta1, beta2, group["eps"], state["step"]
@@ -264,6 +273,7 @@ class TensorGRaD(Optimizer):
                             if lambda_sparse is None or lambda_sparse <= 0:                                
                                 # Default: DoF ratio (sparse_ratio / rank_frac)
                                 lambda_sparse = state["sparse_ratio"] / (state["rank"] + 1e-12)  # Add eps to avoid div by 0
+                                #TODO ошибка, наоборот должно быть!
                             
                             state["lambda_sparse"] = lambda_sparse
                             if self.verbose:
@@ -292,6 +302,13 @@ class TensorGRaD(Optimizer):
                             combined.mul_(0.5)
                         
                         norm_grad = combined
+                        #--------- for debug and check errors by glazkov
+                        # if (p is p_for_tracing):
+                        #     print("its match")
+                        #     print("shape", p.shape)
+                        #     print("norm grad shape", norm_grad.shape)
+                        #     save_grad_for_tracing.add_(norm_grad)
+                        #---------------
                         del combined
                         torch.cuda.empty_cache()
                 else:
@@ -305,6 +322,7 @@ class TensorGRaD(Optimizer):
                 # Convert norm_grad back to parameter's dtype if needed
                 if self.enforce_full_complex_precision and p.dtype == torch.complex32:
                     norm_grad = norm_grad.to(torch.complex32)
+
 
                 # --- Apply Update ---
                 step_size = -group["lr"] * step_size if group.get("correct_bias", True) else -group["lr"]
