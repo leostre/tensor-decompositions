@@ -37,9 +37,9 @@ class ParallelTG(TensorGRaD):
 
 class ULTG(TensorGRaD):
     _defaults = dict(
-        proj_type='unstructured_sparse', 
+        proj_type='unstructured_sparse', #NOTE IT DEFINES UNSTRUCTURED AS 1st projector
         galore_2d_proj_type='left', 
-        second_proj_type='low_rank'
+        second_proj_type='low_rank' #NOTE THATS second
     )
 
     def __new__(cls, model, svd_type, rank: Union[int, float, Tuple[int]], *, 
@@ -50,9 +50,35 @@ class ULTG(TensorGRaD):
             svd_type=svd_type, 
             learning_rate=learning_rate,
             scheduler=scheduler,
-            rank=rank[0],
+            second_rank=rank[0],
             optimizer_type='tensorgrad',
-            sparce_ratio = rank[-1]
+            sparse_ratio = rank[-1]
+        ) | kwargs
+        config = TensorGRaDConfig(
+            DataConfig(**_normalize_kwargs(DataConfig.__init__, parameters)),
+            OptimizerConfig(**_normalize_kwargs(OptimizerConfig.__init__, parameters))
+        )
+        opt, sch = setup_optimizer_and_scheduler(config, model, None)
+        return opt, sch
+
+class AdamW(TensorGRaD):
+    _defaults = dict(
+        proj_type='unstructured_sparse', #NOTE IT DEFINES UNSTRUCTURED AS 1st projector
+        galore_2d_proj_type='left', 
+        second_proj_type='low_rank' #NOTE THATS second
+    )
+
+    def __new__(cls, model, svd_type, rank: Union[int, float, Tuple[int]], *, 
+                scheduler='StepLR', learning_rate=1e-4, **kwargs):
+        if not isinstance(rank, (tuple, list)):
+            rank = (rank,)
+        parameters = cls._defaults | dict(
+            svd_type=svd_type, 
+            learning_rate=learning_rate,
+            scheduler=scheduler,
+            second_rank=rank[0],
+            optimizer_type='adamw',
+            sparse_ratio = rank[-1]
         ) | kwargs
         config = TensorGRaDConfig(
             DataConfig(**_normalize_kwargs(DataConfig.__init__, parameters)),

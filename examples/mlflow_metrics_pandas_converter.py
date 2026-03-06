@@ -25,7 +25,7 @@ class MlflowMetricsPandasConverter:
         return df
 
     def get_metrics_from_all_experiment_runs(self, experiment_id, filter_string='', include_parameters=[]) -> pd.DataFrame:
-        '''It suppoused, that all exepiments with equal metric columns'''
+        '''It supposed, that all exepiments with equal metric columns'''
         runs = self.mlFlowClient.search_runs(experiment_id, filter_string=filter_string)
         combined_df = pd.DataFrame()
         for run in runs:

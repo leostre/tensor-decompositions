@@ -13,7 +13,7 @@ import tensorly as tl
 class GaLoreProjector:
     def __init__(self, 
                  rank: Number, 
-                 verbose=False, 
+                 verbose=True, 
                  svd_type: Optional[Callable[[TensorLike], tuple[TensorLike, TensorLike, TensorLike]]]=None, 
                  update_gap_scheduler: UpdateGapScheduler = UpdateGapScheduler(100, 1000), 
                  scale=1.0, 
