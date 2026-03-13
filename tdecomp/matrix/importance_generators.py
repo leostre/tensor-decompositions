@@ -105,7 +105,7 @@ class ImportanceComputer:
         return method(X)
 
 
-# __locals = locals()
-# IMPORTANCE_GENS = {
-#     name: func for name, func in __locals.items() if name not in ('ImportanceComputer',)
-# }
+__locals = locals()
+IMPORTANCE_GENS = {
+    name: func for name, func in __locals.items() if name not in ('ImportanceComputer',)
+}

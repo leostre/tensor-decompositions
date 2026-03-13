@@ -219,3 +219,8 @@ class Projector:
     
     lproject = partialmethod(project, side='left')
     rproject = partialmethod(project, side='right')
+
+__locals = locals()
+RANDOM_GENS = {
+    name: func for name, func in __locals.items() if not name in ('Projector', '__all__', '_default_context', 'ProjectorGenerator')
+}
