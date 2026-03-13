@@ -58,7 +58,8 @@ def ridge_leverage(
         M_inv = tl.solve(M_reg, I) # n x n
 
         # 1. Row Scores: diag(X M_inv X^T) -> построчно x_i M_inv x_i^T (m x m)
-        row_scores = tl.sum(tl.matmul(X, tl.matmul(M_inv, Xt)), axis=1)
+        XM = tl.matmul(X, M_inv)
+        row_scores = tl.sum(XM * X, axis=1)
         
         # 2. Col Scores: diag( 1/lam * (G - G M_inv G) )
         # G = XtX. Считаем K = G @ M_inv @ G
@@ -74,7 +75,7 @@ def ridge_leverage(
         
         # 1. Col Scores: diag(X^T M_inv X)
         XtM = tl.matmul(Xt, M_inv) # n x m
-        col_scores = tl.matmul(XtM, X).sum(dim=1)
+        col_scores = tl.sum(XtM * Xt, axis=1)
         
         # 2. Row Scores: diag( 1/lam * (G - G M_inv G) ) где G = XXt
         term2 = tl.matmul(XXt, tl.matmul(M_inv, XXt))
