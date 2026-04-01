@@ -2,6 +2,7 @@ from functools import partial
 from typing import Callable, Optional
 
 from torch.utils.checkpoint import checkpoint
+from torch.autograd.profiler import record_function
 
 import tdecomp
 from tdecomp.grad_proj.tensorgrad.config import Galore2DProjectionSide
@@ -12,7 +13,7 @@ import tensorly as tl
 class GaLoreProjector:
     def __init__(self, 
                  rank: Number, 
-                 verbose=False, 
+                 verbose=True, 
                  svd_type: Optional[Callable[[TensorLike], tuple[TensorLike, TensorLike, TensorLike]]]=None, 
                  update_gap_scheduler: UpdateGapScheduler = UpdateGapScheduler(100, 1000), 
                  scale=1.0, 
@@ -57,12 +58,13 @@ class GaLoreProjector:
     @tdecomp.utils.no_grad
     def project(self, full_rank_grad: TensorLike, iter: int) -> TensorLike:
         '''Main method for projecting gradients during model training'''
-        type_ = self.galore_2d_proj_type
-        if self.ortho_matrix is None or self.update_gap_scheduler.should_update(iter):
-            self.ortho_matrix = self.get_orthogonal_matrix(full_rank_grad, self.rank, 
-                                                           galore2dProjectionSide=type_) 
-        low_rank_grad = getattr(self, f'_project_{type_}')(full_rank_grad)                              
-        return low_rank_grad
+        with record_function("### GALORE FORWARD PROJ ###"):
+            type_ = self.galore_2d_proj_type
+            if self.ortho_matrix is None or self.update_gap_scheduler.should_update(iter):
+                self.ortho_matrix = self.get_orthogonal_matrix(full_rank_grad, self.rank, 
+                                                            galore2dProjectionSide=type_) 
+            low_rank_grad = getattr(self, f'_project_{type_}')(full_rank_grad)                              
+            return low_rank_grad
     
     def _check_reconstruction_buffer_not_none(self, tensor: TensorLike):
         if self._reconstruction_buffer is None:
@@ -92,7 +94,8 @@ class GaLoreProjector:
 
     @tdecomp.utils.no_grad
     def project_back(self, low_rank_grad: TensorLike) -> TensorLike:
-        return getattr(self, f'_project_back_{self.galore_2d_proj_type}')(low_rank_grad)
+        with record_function("### GALORE BACKWARD PROJ ###"):
+            return getattr(self, f'_project_back_{self.galore_2d_proj_type}')(low_rank_grad)
     
     @tdecomp.utils.no_grad
     def get_orthogonal_matrix(self, tensor: TensorLike, rank: Number, galore2dProjectionSide: Galore2DProjectionSide) -> TensorLike | tuple[TensorLike, TensorLike]:
