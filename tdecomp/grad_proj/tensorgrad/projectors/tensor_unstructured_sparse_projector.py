@@ -1,8 +1,17 @@
+import math
+from typing import Optional
 import torch
 from torch.autograd.profiler import record_function
-import numpy as np
 
-class TensorGradUnstructuredProjector:
+import tdecomp
+from tdecomp.grad_proj.tensorgrad.config import SparseType
+from tdecomp.grad_proj.tensorgrad.projectors.abstract_sparce_projector import AbstractSparceProjector
+from tdecomp.grad_proj.tensorgrad.projectors.update_gap_scheduler import UpdateGapScheduler
+from tdecomp.types import TensorLike
+import tensorly as tl
+
+
+class TensorGradUnstructuredProjector(AbstractSparceProjector):
     """
     N-D projector using unstructured (element-wise) sparsity,
     storing only the values at specified indices.
@@ -10,9 +19,9 @@ class TensorGradUnstructuredProjector:
     def __init__(
         self,
         sparse_ratio: float = 0.25,
-        sparse_type: str = "randk",
+        sparse_type: SparseType = "randk",
         verbose: bool = False,
-        update_gap_scheduler=None,
+        update_gap_scheduler = UpdateGapScheduler(100, 1000),
         scale: float = 1.0,
         proj_type: str = "std",  # for naming consistency
         warm_restart: bool = False,
@@ -52,7 +61,7 @@ class TensorGradUnstructuredProjector:
         print(f"Update gap scheduler: {self.update_gap_scheduler}")
         print(f"UnstructuredSparseProjector initialized with sparse_ratio={self.sparse_ratio}, sparse_type={self.sparse_type}, scale_by_mask_ratio={self.scale_by_mask_ratio}")
         
-    def should_update_projector(self, iteration):
+    def should_update_projector(self, iteration: int):
         """Check if the projector indices should be updated in this iteration"""
         if self._indices is None:
             self.should_update = True
@@ -60,15 +69,15 @@ class TensorGradUnstructuredProjector:
             self.should_update = self.update_gap_scheduler.should_update(iteration)
         return self.should_update
 
-    def project(self, full_grad: torch.Tensor, iteration: int) -> torch.Tensor:
+    @tdecomp.utils.no_grad
+    def project(self, full_grad: TensorLike, iteration: int) -> TensorLike:
         with record_function("### UNSTRUCTURED_SPARSE_PROJECT_FORWARD"):
             if self._orig_shape is None:
-                self._orig_shape = full_grad.shape
+                self._orig_shape = tl.shape(full_grad)
 
             # Only update indices if necessary
             if (self._indices is None) or self.should_update_projector(iteration):
-                with torch.no_grad():
-                    self._build_indices(full_grad)
+                self._build_indices(full_grad)
 
             # Just return the values at the selected indices
             flat = full_grad.view(-1)
@@ -76,13 +85,14 @@ class TensorGradUnstructuredProjector:
                 
             return result
     
+    @tdecomp.utils.no_grad
     def project_back(
         self,
-        small_grad: torch.Tensor,
-        output_buffer: torch.Tensor = None,
+        small_grad: TensorLike,
+        output_buffer: Optional[torch.Tensor] = None,
         alpha: float = 1.0,
         accumulate: bool = False
-    ) -> torch.Tensor:
+    ) -> TensorLike:
         """
         Back-project a sparse vector into `output_buffer`, either overwriting
         (accumulate=False) or adding to existing contents (accumulate=True).
@@ -100,28 +110,24 @@ class TensorGradUnstructuredProjector:
             # If no buffer provided, create a new one
             if output_buffer is None:
                 # Create a zero tensor with the original shape
-                output_buffer = torch.zeros(
-                    self._orig_shape,
-                    dtype=small_grad.dtype,  # Use input dtype for consistency
-                    device=small_grad.device
-                )
+                output_buffer = tl.zeros(self._orig_shape, **tl.context(small_grad))
                 # For new buffers, we always overwrite (accumulate flag is ignored)
                 accumulate = False
             else:
                 # Ensure buffer shape matches original shape
-                assert output_buffer.shape == self._orig_shape, f"Buffer shape {output_buffer.shape} doesn't match original shape {self._orig_shape}"                
+                assert tl.shape(output_buffer) == self._orig_shape, f"Buffer shape {output_buffer.shape} doesn't match original shape {self._orig_shape}"                
                 # Ensure consistent dtype between small_grad and output_buffer
-                if small_grad.dtype != output_buffer.dtype:
+                if tl.context(small_grad)["dtype"] != tl.context(output_buffer)["dtype"]:
                     if self.verbose:
-                        print(f"Converting small_grad from {small_grad.dtype} to {output_buffer.dtype} for consistency")
-                    small_grad = small_grad.to(dtype=output_buffer.dtype)
+                        print(f'Converting small_grad from {tl.context(small_grad)["dtype"]} to {tl.context(output_buffer)["dtype"]} for consistency')
+                    small_grad = tl.tensor(small_grad, **tl.context(output_buffer))
             
             # Scale values once (combining alpha and scale_factor)
             # Convert to the same dtype as the output buffer to avoid dtype mismatch in scatter_
-            vals = (small_grad * (self.scale_factor * alpha)).to(output_buffer.dtype)
+            vals = (small_grad * (self.scale_factor * alpha))
             
             # Store original shape to reshape back at the end
-            original_shape = output_buffer.shape
+            original_shape = tl.shape(output_buffer)
             
             # Get flattened version of buffer - try to use view first
             if output_buffer.is_contiguous():
@@ -132,7 +138,7 @@ class TensorGradUnstructuredProjector:
                 flat = output_buffer.reshape(-1)
             
             # Check if we're using ComplexHalf dtype which doesn't support scatter operations
-            is_complex_half = flat.dtype == torch.complex32
+            is_complex_half = tl.context(flat)["dtype"] == torch.complex32
             
             # If using ComplexHalf, temporarily convert to a supported type
             if is_complex_half:
@@ -166,43 +172,27 @@ class TensorGradUnstructuredProjector:
                 
             return output_buffer
 
-    def _build_indices(self, x: torch.Tensor):
+    def _build_indices(self, x: TensorLike):
         """
         Build a 1D LongTensor of indices to keep in the flattened tensor.
         """
-        with torch.no_grad():
-            flat = x.view(-1)
-            numel = flat.numel()
-            k = max(1, int(self.sparse_ratio * numel))
+        flat = x.view(-1)
+        numel = tl.shape(flat)[0]
+        k = max(1, int(self.sparse_ratio * numel))
 
-            if self.sparse_type.lower() == "topk":
-                # pick topk by absolute value
-                vals = flat.abs()
-                topk_vals, idx = torch.topk(vals, k)
-            elif self.sparse_type.lower() == "probability":
-                # Probability is weighted by absolute value
-                vals = flat.abs()
-                probs = vals / (vals.sum() + 1e-12)
-                idx = torch.multinomial(probs, k, replacement=False)
-            elif self.sparse_type.lower() in ("randk", "randomk"):
-                # Use numpy for efficient CPU-side sampling
-                cpu_idx = np.random.choice(numel, k, replace=False)
-                idx = torch.from_numpy(cpu_idx).to(x.device, dtype=torch.long)
-                del cpu_idx
-            else:
-                raise ValueError(f"Unsupported sparse_type: {self.sparse_type}")
+        _, idx = self._create_sparse_mask(tl.abs(flat), self.sparse_type.lower(), k, tl.context(x))
 
-            # Sort for better memory locality
-            self._indices = idx.sort().values
+        # Sort for better memory locality
+        self._indices = tl.sort(idx, 0)
             
-            del idx
-            torch.cuda.empty_cache()
+        del idx
+        torch.cuda.empty_cache()
 
-            # Possibly compute scaling factor to preserve total norm
-            if self.scale_by_mask_ratio:
-                # sqrt to preserve L2 norm
-                self.scale_factor = self.base_scale * torch.sqrt(torch.tensor(numel / k))
-                # Only do it once
-                self.scale_by_mask_ratio = False
-                if self.verbose:
-                    print(f"Set scale factor to {self.scale_factor:.4f}")
+        # Possibly compute scaling factor to preserve total norm
+        if self.scale_by_mask_ratio:
+            # sqrt to preserve L2 norm
+            self.scale_factor = self.base_scale * math.sqrt(numel / k)
+            # Only do it once
+            self.scale_by_mask_ratio = False
+            if self.verbose:
+                print(f"Set scale factor to {self.scale_factor:.4f}")

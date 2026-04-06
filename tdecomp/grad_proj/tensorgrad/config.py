@@ -1,11 +1,15 @@
 from dataclasses import dataclass
-from typing import Optional, Literal, Union, List
+from typing import Optional, Literal, TypeAlias
 
 @dataclass
 class DataConfig:
     batch_size: int = None
     n_train: int = None
     tmp_dir: str = "/tmp/t2t_datagen"  # From tensor2tensor example :cite[4]
+
+Galore2DProjectionSide: TypeAlias = Literal["right", "left", "full"]
+SparseType: TypeAlias = Literal['topk', 'randk', 'randomk', 'probablility']
+'''Determine how to extract random columns/rows by scores'''
 
 @dataclass
 class OptimizerConfig:
@@ -25,9 +29,9 @@ class OptimizerConfig:
     rank: int = 128
     scale: float = 1.0
     proj_type: Literal["low_rank", "structured_sparse", "unstructured_sparse"] = "low_rank"
-    galore_2d_proj_type: Literal["right", "left", "full"] = "left"
+    galore_2d_proj_type: Galore2DProjectionSide = "left"
     sparse_ratio: float = 0.1  # Ratio of elements to keep in sparse projections
-    sparse_type: Literal['topk', 'randK', 'probability'] = "topk"
+    sparse_type: SparseType = "topk"
     scale_by_mask_ratio: bool = True
     reset_sparse_optimizer_states: bool = False
     enforce_full_complex_precision: bool = False
@@ -36,7 +40,7 @@ class OptimizerConfig:
     # Second projector parameters
     second_proj_type: Literal["low_rank", "structured_sparse", "unstructured_sparse"]  = "unstructured_sparse"
     second_sparse_ratio: float = 0.25
-    second_sparse_type: Literal['topk', 'randK', 'probability'] = "topk"
+    second_sparse_type: SparseType = "topk"
     second_scale: float = 1.0
     second_rank: int = 128
     second_scale_by_mask_ratio: bool = False

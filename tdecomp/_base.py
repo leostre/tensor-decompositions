@@ -1,15 +1,14 @@
-import torch
+import math
+from typing import List, Optional, Union
+import tensorly as tl
 
-from functools import wraps, reduce, partial, partialmethod
-from typing import *
+import tdecomp
+from tdecomp.types import Number, TensorLike
+
+from functools import wraps
 from abc import ABC, abstractmethod
-
-from tensorly import set_backend
-from tensorly.tenalg import mode_dot
-
-from tdecomp.matrix.random_projections import RANDOM_GENS
-
-set_backend('pytorch')
+from tdecomp.matrix.random_projections import ProjectorGenerator
+from tdecomp.matrix.importance_generators import ColumnRowImportancesGenerator
 
 __all__ = [
     'Number',
@@ -17,150 +16,215 @@ __all__ = [
     'TensorDecomposer'
 ]
 
-Number = Union[int, float]
-
 DIM_SUM_LIM = 1024
 DIM_LIM = 1024
 
 def _need_t(f):
-    """Performs matrix transposition for maximal projection effect"""
+    """Performs matrix transposition for maximal projection effect  
+    Supports only 2D tensors!"""
     @wraps(f)
-    def _wrapper(self: Decomposer, W: torch.Tensor, *args, **kwargs):
-            m, n = W.size(-2), W.size(-1)
-            _is_transposed = m >= n
-            weight = W.t() if _is_transposed else W
-            tns = f(self, weight, *args, **kwargs)
-            return (
-                tns if not _is_transposed
-                else tuple(t.t() for t in reversed(tns))
-            )
+    def _wrapper(self: Decomposer, W: TensorLike, *args, **kwargs) -> tuple[TensorLike, TensorLike, TensorLike]:
+        m, n = tl.shape(W)[-2], tl.shape(W)[-1]
+        _is_transposed = m >= n
+        weight = tl.transpose(W) if _is_transposed else W
+        decomposed_tensors = f(self, weight, *args, **kwargs)
+        return (
+            decomposed_tensors if not _is_transposed
+            else tuple(tl.transpose(t) for t in reversed(decomposed_tensors))
+        )
     return _wrapper
 
 def _conditioning(f):
     """If conditioner is detected, apply W' = W @ C @ C^-1
     then U, S, Vh = Decompostion(W @ C)
-    and Vh = Vh @ C^-1
+    and Vh = Vh @ C^-1  
+    Conditioner shouldn't be singular or contain zero columns!  
+    C could be 1D or 2D
     """
     @wraps(f)
-    def _conditioned(self: "Decomposer", W: torch.Tensor, rank=None, conditioner=None, *args, **kwargs):
+    def _conditioned(self: "Decomposer", W: TensorLike, rank=None, conditioner=None, *args, **kwargs) -> tuple[TensorLike, TensorLike, TensorLike]:
         if conditioner is None:
             conditioner = self._conditioner
         if conditioner is None:
             return f(self, W, rank, *args, **kwargs)
-        if conditioner.ndim != 1:
-            operation = torch.matmul
-            inverse_operation = torch.linalg.pinv
+        if tl.ndim(conditioner) != 1:
+            W = tl.matmul(W, conditioner)
+            inverse_conditioner = tdecomp.utils.pseudo_inverse(conditioner)
+            *decomposition, Vh = f(self, W, rank, *args, **kwargs)
+            Vh = tl.matmul(Vh, inverse_conditioner)
+            return *decomposition, Vh
         else: 
-            operation = torch.mul
-            inverse_operation = lambda x: 1 / x  
-        W = operation(W, conditioner)
-        inverse = inverse_operation(conditioner)
-        *decomposition, Vh = f(self, W, rank, *args, **kwargs)
-        Vh = operation(Vh, inverse)
-        return *decomposition, Vh
+            W = tl.einsum('ij,j->ij', W, conditioner)
+            inverse = 1 / conditioner #WARN: also can be failed (devide by zero)
+            *decomposition, Vh = f(self, W, rank, *args, **kwargs)
+            Vh = tl.einsum('ij,j->ij', Vh, inverse)
+            return *decomposition, Vh
     return _conditioned
 
-class Decomposer(ABC):
-    def __init__(self, rank: Union[int, float] = None, distortion_factor: float = 0.6, 
-                 random_init: str = 'normal'):
-        assert 0 < distortion_factor <= 1, 'distortion_factor must be in (0, 1]'
-        self.distortion_factor = distortion_factor
+class AbstractDecomposer(ABC):
+    '''High abstraction class for matrix and tensor decomposers'''
+    def __init__(self, rank = None, 
+                 random_init: (ProjectorGenerator | ColumnRowImportancesGenerator) = ProjectorGenerator.normal):
         self.random_init = random_init
         self.rank = rank
+        '''Default rank, doesn't change during call of decompose(), used only as defaul, when passed rank=None'''
+
+    @abstractmethod
+    def _get_rank(self, tensor: TensorLike, rank) -> int | List[int]:
+        pass
+
+    @abstractmethod
+    def _decompose(self, X: TensorLike, rank, **kwargs) -> tuple:
+        pass
+
+    def _decompose_big(self, X: TensorLike, rank, **kwargs) -> tuple:
+        return self._decompose(X, rank, **kwargs)
+
+    @abstractmethod
+    def compose(self, *factors, **kwargs) -> TensorLike:
+        pass
+
+    def decompose(self, tensor: TensorLike, rank = None, **kwargs) -> tuple:
+        rank = self._get_rank(tensor, rank)
+        if not self._is_big(tensor):
+            return self._decompose(tensor, rank, **kwargs)
+        else:
+            return self._decompose_big(tensor, rank, **kwargs)
+    
+    def _is_big(self, W: TensorLike) -> bool:
+        return sum(tl.shape(W)) > DIM_SUM_LIM or any(d > DIM_LIM for d in tl.shape(W))
+    
+    def set_conditioner(self, conditioner: TensorLike):
+        self._conditioner = conditioner
+    
+    def get_approximation_error(self, tensor: TensorLike, *approximation_matrices, relative: bool = True) -> float:
+        eps = 1e-5
+        approximation = self.compose(*approximation_matrices)
+        error_mtr = tensor - approximation
+        error_norm = tl.norm(error_mtr, order=2)
+        if relative:
+            initial_norm = tl.norm(tensor, order=2)
+            error_norm /= initial_norm + eps
+        return error_norm
+
+class Decomposer(AbstractDecomposer):
+    '''Matrix decomposer'''
+    def __init__(self, rank: Optional[Number] = None, distortion_factor: float = 0.6, 
+                 random_init: (ProjectorGenerator | ColumnRowImportancesGenerator) = ProjectorGenerator.normal):
+        super().__init__(rank=rank, random_init=random_init)
+        assert 0 < distortion_factor <= 1, 'distortion_factor must be in (0, 1]'
+        self.distortion_factor = distortion_factor
+        '''How much distances can change during low-rank aproximation, used in estimation of stable_rank
+        (or how much we need samples=columns to estimate stable rank with error of distortion_factor)'''
         self._conditioner = None
 
-    def _get_rank(self, tensor: torch.Tensor, rank: Number) -> int:
+    def estimate_stable_rank(self, W: TensorLike) -> int:
+        n_samples = max(tl.shape(W))
+        eps = self.distortion_factor
+        min_num_samples = int(4 * math.log(n_samples) / (eps**2 / 2 - eps**3 / 3))
+        return max(min(min_num_samples, *tl.shape(W)), 1)
+
+    def _get_rank(self, tensor: TensorLike, rank: Optional[Number]) -> int:
         rank = rank or self.rank
         if rank is None:
             rank = self.estimate_stable_rank(tensor)
         elif isinstance(rank, float):
-            rank = max(1, int(rank * min(tensor.size())))
+            rank = max(1, int(rank * min(tl.shape(tensor))))
         elif isinstance(rank, int):
-            rank = max(1, min(rank, min(tensor.size())))
+            rank = min(rank, min(tl.shape(tensor)))
         else:
             raise TypeError(f'Expected types for `rank`: {repr(Number)}, got `{type(rank)}`')
-        return rank                
-
+        return rank
+    
+    #override base method in purpose of correct typing of 'rank' field
     @_conditioning
-    def decompose(self, tensor: torch.Tensor, rank: Number = None, *args, **kwargs):
-        rank = self._get_rank(tensor, rank)
-        if not self._is_big(tensor):
-            return self._decompose(tensor, rank, *args, **kwargs)
-        else:
-            return self._decompose_big(tensor, rank, *args, **kwargs)
-        
-    def _is_big(self, W: torch.Tensor):
-        return sum(W.size()) > DIM_SUM_LIM or any(d > DIM_LIM for d in W.size())
+    def decompose(self, tensor: TensorLike, rank: Optional[Number] = None, **kwargs) -> tuple[TensorLike, TensorLike, TensorLike]:
+        return super().decompose(tensor, rank, **kwargs)
     
-    def set_conditioner(self, conditioner):
-        self._conditioner = conditioner
-        
+    #override this for correct typing in child classes
     @abstractmethod
-    def _decompose(self, W, rank, *args, **kwargs):
+    def _decompose(self, X: TensorLike, rank: int, **kwargs) -> tuple[TensorLike, TensorLike, TensorLike]:
         pass
-    
-    def _decompose_big(self, W, rank, *args, **kwargs):
-        return self._decompose(W, rank, *args, **kwargs)
-    
-    def estimate_stable_rank(self, W):
-        n_samples = max(W.shape)
-        eps = self.distortion_factor
-        min_num_samples = torch.ceil(4 * torch.log(torch.scalar_tensor(n_samples)) / (eps**2 / 2 - eps**3 / 3))
-        return max(min(torch.round(min_num_samples), *W.size()), 1)
-    
-    def get_approximation_error(self, tensor: torch.Tensor, *approximation, relative: bool = True):
-        eps = 1e-5
-        approximation = self.compose(*approximation)
-        error_mtr = tensor - approximation
-        error_norm = torch.linalg.norm(error_mtr)
-        if relative:
-            initial_norm = torch.linalg.norm(tensor)
-            error_norm /= initial_norm + eps
-        return error_norm
-    
-    def compose(self, *factors, **kwargs) -> torch.Tensor:
+
+    def _decompose_big(self, X: TensorLike, rank: int, **kwargs) -> tuple[TensorLike, TensorLike, TensorLike]:
+        return super()._decompose_big(X, rank, **kwargs)
+
+    def compose(self, *factors: TensorLike, **kwargs) -> TensorLike:
+        '''
+        :param factors: U S and Vh or US and Vh. Works only with 2D tensors, S treated as 1D diagonal.
+        '''
         nfactors = len(factors)
         if nfactors == 2:
-            return factors[0] @ factors[1]
+            return tl.matmul(factors[0], factors[1])
         elif nfactors == 3:
             U, S, Vh = factors
-            return (U * S) @ Vh
+            US = tl.einsum("ij,j->ij", U, S)
+            return tl.matmul(US, Vh)
         else:
             raise ValueError('Unknown type of decomposition!')
 
+class TensorDecomposer(AbstractDecomposer):
+    def __init__(self, 
+                 rank: Optional[Union[Number, List[Number]]] = None, 
+                 random_init: ProjectorGenerator | ColumnRowImportancesGenerator = ProjectorGenerator.normal):
+        super().__init__(rank, random_init)
+        self._rank_validated = False
+        '''If self.rank once was checked, skip check in _get_rank if input rank is self.rank or None'''
 
-class TensorDecomposer(Decomposer):
-    def _get_rank(self, tensor: torch.Tensor, rank: Number) -> List[int]:
+    def _get_rank(self, tensor: TensorLike, rank: Optional[Union[Number, List[Number]]]) -> List[int]:
+        '''Apply rank to tensor. Used word "rank" in term of shape and m-mode rank, not a lineary-independent tensor basis (not a matrix rank).
+        '''
         rank = rank or self.rank
+        if (rank is not self.rank):
+            self._rank_validated = False
+        
+        if (self._rank_validated):
+            return self.rank #type: ignore
+        tensor_ndim = tl.ndim(tensor)
+        tensor_shape = list(tl.shape(tensor))
         if rank is None:
-            rank = list(tensor.size())
+            rank = tensor_shape
         elif isinstance(rank, int):
-            rank = [rank] * tensor.ndim
+            assert rank > 0, "Int rank must be more than zero"
+            rank = [min(rank, d) for d in tensor_shape]
         elif isinstance(rank, float):
             assert 0 < rank <= 1, 'Float rank must lie in (0, 1]'
-            rank = int(rank * min(tensor.size()))
-            rank = [rank] * tensor.ndim
+            rank = [max(1, int(rank * d)) for d in tensor_shape]
         elif hasattr(rank, '__iter__'):
-            if len(rank) != tensor.ndim:
-                raise ValueError(f"Rank list length {len(rank)} must match tensor dimensions {tensor.dim()}")
-            ranks = [None] * tensor.ndim
-            for i in range(tensor.ndim):
+            if len(rank) != tensor_ndim:
+                raise ValueError(f"Rank list length {len(rank)} must match tensor dimensions {tensor_ndim}")
+            ranks = [None] * tensor_ndim
+            for i in range(tensor_ndim):
                 if isinstance(rank[i], int):
                     ranks[i] = rank[i]
                 elif isinstance(rank[i], float):
-                    ranks[i] = int(rank[i] * tensor.size(i))
+                    ranks[i] = max(1, int(rank[i] * tensor_shape[i]))
                 else:
                     raise ValueError('Unexpected value for rank!')
             rank = ranks
         else:
-            raise TypeError(f'Supprted formats are: int, float (0,1] and lists of them, got {type(rank)}')
-        return rank
+            raise TypeError(f'Supported formats are: int, float (0,1] and lists of them, got {type(rank)}')
+        
+        self._rank_validated = True
+        return rank # type: ignore
 
-    def compose(self, core: torch.Tensor, *factors: List[torch.Tensor]) -> torch.Tensor:
+    #override base method in purpose of correct typing of 'rank' field
+    def decompose(self, tensor: TensorLike, rank: Optional[Number | List[Number]] = None, **kwargs) -> tuple[TensorLike, list[TensorLike]]:
+        return super().decompose(tensor, rank, **kwargs)
+    
+    #override this for correct typing in child classes
+    @abstractmethod
+    def _decompose(self, X: TensorLike, rank: List[int], **kwargs) -> tuple[TensorLike, list[TensorLike]]:
+        pass
+
+    def _decompose_big(self, X: TensorLike, rank: List[int], **kwargs) -> tuple[TensorLike, list[TensorLike]]:
+        return super()._decompose_big(X, rank, **kwargs)
+
+    def compose(self, core: TensorLike, *factors: TensorLike) -> TensorLike:
         for i, factor in enumerate(factors):
-            core = mode_dot(core, factor, i)
+            core = tl.tenalg.mode_dot(core, factor, i)
         return core
     
-    def get_approximation_error(self, tensor, *approximation, relative = True):
+    def get_approximation_error(self, tensor: TensorLike, *approximation: TensorLike, relative = True):
         core, factors = approximation
         return super().get_approximation_error(tensor, core, *factors, relative=relative)

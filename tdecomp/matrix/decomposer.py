@@ -1,10 +1,13 @@
-import torch
+from functools import partial
 
 from typing import *
 
+import tdecomp
+from tdecomp.types import Number, TensorLike
 from tdecomp._base import Decomposer, _need_t
-from tdecomp.matrix.random_projections import RANDOM_GENS
-from tdecomp.matrix.importance_generators import IMPORTANCE_GENS
+from tdecomp.matrix.random_projections import ProjectorGenerator
+from tdecomp.matrix.importance_generators import ColumnRowImportancesGenerator
+import tensorly as tl
 
 __all__ = [
     'SVDDecomposition',
@@ -13,57 +16,54 @@ __all__ = [
     'CURDecomposition'
 ]
 
-
 class SVDDecomposition(Decomposer):
-    def _decompose(self, W: torch.Tensor, rank) -> tuple:
-        """Block Krylov subspace method for computing the SVD of a matrix with a low computational cost.
+    def _decompose(self, X: TensorLike, rank, **kwargs) -> tuple[TensorLike, TensorLike, TensorLike]:
+        """Standart SVD decomposition, realization depends on various backends.  
+        Result is non-determenistic, sign of U and V can change in columns together.
 
         Args:
             W: matrix to decompose
         Returns:
-            u, s, vt: decomposition
-
+            U, S, Vt: decomposition
         """
-        # Return classic svd decomposition
-        return torch.linalg.svd(W, full_matrices=False)
+        return tl.truncated_svd(X, n_eigenvecs=min(tl.shape(X)))
 
 
 class RandomizedSVD(Decomposer):
     """
     https://arxiv.org/pdf/2404.09276
     """
-    _random_gens = RANDOM_GENS
 
-    def __init__(self, rank=None, power: int = 3,
+    def __init__(self, rank: Optional[Number] = None, power: int = 3,
                  distortion_factor: float = 0.6, 
-                 random_init: str = 'normal'):
+                 random_init: ProjectorGenerator = ProjectorGenerator.normal):
         super().__init__(rank, distortion_factor, random_init)
         self.power = power
 
-    def estimate_stable_rank(self, tensor: torch.Tensor) -> int:
-        svals = torch.linalg.svdvals(tensor)
-        stable_rank = (svals.sum() / svals.max())**2
-        return max(1, min(tensor.size(-1), int(stable_rank * (1 / self.distortion_factor))))
+    def estimate_stable_rank(self, W: TensorLike) -> int:
+        svals_squared = tdecomp.utils.svdvals(W) ** 2
+        stable_rank = (tl.sum(svals_squared) / tl.max(svals_squared))
+        return max(1, min(min(tl.shape(W)), int(stable_rank * (1 / self.distortion_factor))))
     
     @_need_t
-    def _decompose_big(self, X: torch.Tensor, rank):
-        P = self._random_gens[self.random_init](rank, X.size(-2), device=X.device, dtype=X.dtype)
-        G = P @ X @ (X.T @ P.T)
-        Q, _ = torch.linalg.qr(
-            (torch.pow(G, self.power) @ (P @ X)).T,
+    def _decompose_big(self, X: TensorLike, rank: int, **kwargs) -> tuple[TensorLike, TensorLike, TensorLike]:
+        P = self.random_init.value(rank, tl.shape(X)[-2], tl.context(X))
+        G = tl.matmul(P, tl.matmul(X, tl.matmul(tl.transpose(X), tl.transpose(P))))
+        Q, _ = tl.qr(
+            tl.transpose(tl.matmul(G ** self.power, tl.matmul(P, X))),
             mode='reduced')
-        B = X @ Q
-        U, S, Vh = torch.linalg.svd(B, full_matrices=False)
-        return U, S, Vh @ Q.T
+        B = tl.matmul(X, Q)
+        U, S, Vh = tl.truncated_svd(B, n_eigenvecs=min(tl.shape(B)))
+        return U, S, tl.matmul(Vh, tl.transpose(Q))
         
     @_need_t
-    def _decompose(self, X: torch.Tensor, rank):
-        G = X @ X.T
-        P = self._random_gens[self.random_init](X.size(-1), rank, device=X.device, dtype=X.dtype)
-        Q, _ = torch.linalg.qr(torch.pow(G, self.power) @ X @ P, mode='reduced')
-        B = Q.T @ X
-        U, S, Vh = torch.linalg.svd(B, full_matrices=False)
-        return Q @ U, S, Vh
+    def _decompose(self, X: TensorLike, rank: int, **kwargs) -> tuple[TensorLike, TensorLike, TensorLike]:
+        G = tl.matmul(X, tl.transpose(X))
+        P = self.random_init.value(tl.shape(X)[-1], rank, tl.context(X))
+        Q, _ = tl.qr(tl.matmul(G ** self.power, tl.matmul(X, P)), mode='reduced')
+        B = tl.matmul(tl.transpose(Q), X)
+        U, S, Vh = tl.truncated_svd(B, n_eigenvecs=min(tl.shape(B)))
+        return tl.matmul(Q, U), S, Vh
 
 
 class TwoSidedRandomSVD(RandomizedSVD):
@@ -71,31 +71,30 @@ class TwoSidedRandomSVD(RandomizedSVD):
     Randomized Two-Sided SVD with explicit rank parameter support
     https://scispace.com/pdf/randomized-algorithms-for-computation-of-tucker-1stsnpusvv.pdf
     """
-    def __init__(self, rank: int = None, distortion_factor: float = 0.6, 
-                 random_init: str = 'normal', ):
+    def __init__(self, rank: Optional[int] = None, distortion_factor: float = 0.6, 
+                 random_init: ProjectorGenerator = ProjectorGenerator.normal):
         super().__init__(rank=rank, distortion_factor=distortion_factor, random_init=random_init)
-        if random_init == 'lean_walsh' and rank is not None:
+        if random_init == ProjectorGenerator.lean_walsh and rank is not None:
             if not (rank > 0 and (rank & (rank - 1) == 0)):
                 raise ValueError(f"For lean_walsh, rank must be power of 2, got {rank}")
-        self.rank = rank
     
-    def _decompose(self, X: torch.Tensor, rank: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        I, J = X.shape[-2], X.shape[-1]
-        random_gen = self._random_gens[self.random_init]
-        Omega1 = random_gen(J, rank, device=X.device, dtype=X.dtype)
-        Omega2 = random_gen(I, rank, device=X.device, dtype=X.dtype)
+    def _decompose(self, X: TensorLike, rank: int, **kwargs) -> Tuple[TensorLike, TensorLike, TensorLike]:
+        I, J = tl.shape(X)[-2], tl.shape(X)[-1]
+        random_gen: partial[TensorLike] = self.random_init.value
+        Omega1 = random_gen(J, rank, tl.context(X))
+        Omega2 = random_gen(I, rank, tl.context(X))
             
-        Y1 = X @ Omega1
-        Y2 = X.T @ Omega2
+        Y1 = tl.matmul(X, Omega1)
+        Y2 = tl.matmul(tl.transpose(X), Omega2)
             
-        Q1, _ = torch.linalg.qr(Y1, mode='reduced')
-        Q2, _ = torch.linalg.qr(Y2, mode='reduced')
+        Q1, _ = tl.qr(Y1, mode='reduced')
+        Q2, _ = tl.qr(Y2, mode='reduced')
             
-        B = Q1.T @ X @ Q2
+        B = tl.matmul(tl.transpose(Q1), tl.matmul(X, Q2))
             
-        U_bar, S, Vh_bar = torch.linalg.svd(B, full_matrices=False)
-        U = Q1 @ U_bar
-        Vh = (Q2 @ Vh_bar.T).T  
+        U_bar, S, Vh_bar = tl.truncated_svd(B, n_eigenvecs=min(tl.shape(B)))
+        U = tl.matmul(Q1, U_bar)
+        Vh = tl.transpose(tl.matmul(Q2, tl.transpose(Vh_bar)))  
         return U, S, Vh
 
 
@@ -119,36 +118,30 @@ class CURDecomposition(Decomposer):
 
     """
 
-    _importance_gens = IMPORTANCE_GENS
-    def __init__(self, rank=None, distortion_factor: float = 0.6, random_init: str = 'l2_norm'):
+    def __init__(self, rank: Optional[Number] = None, distortion_factor: float = 0.6, 
+                 random_init: ColumnRowImportancesGenerator = ColumnRowImportancesGenerator.l2_norm):
         super().__init__(random_init=random_init, rank=rank, distortion_factor=distortion_factor)
         
-    def _decompose(self, X: torch.Tensor, rank: int = None):
-        rank = self._get_rank(X, rank)
+    def _decompose(self, X: TensorLike, rank: int, **kwargs) -> tuple[TensorLike, TensorLike, TensorLike]:
         # create sub matrices for CUR-decompostion
         c, w, r = self.select_rows_cols(X, rank)
         # evaluate pseudoinverse for W - U^-1
-        u = torch.linalg.pinv(w)
+        u = tdecomp.utils.pseudo_inverse(w)
         # aprox U using pseudoinverse
-        return (c, u, r)
+        return c, u, r
 
-    def _importance(self, X):
-        ax = 0
-
-        # X_scaled = (X - torch.min(X, dim=ax).values) / (torch.max(X, dim=ax).values - torch.min(X, dim=ax).values)
-        # torch.nan_to_num_(X_scaled, 0) 
-        # col_probs, row_probs = self._importance_gens[self.random_init](X_scaled)
-
-        col_probs, row_probs = self._importance_gens[self.random_init](X)
+    def _importance(self, X) -> tuple[TensorLike, TensorLike]:
+        col_probs, row_probs = cast(ColumnRowImportancesGenerator, self.random_init).value(X)
         return col_probs, row_probs
     
 
-    def select_rows_cols(self, X: torch.Tensor, rank: int) -> Tuple[torch.Tensor]:
+    def select_rows_cols(self, X: TensorLike, rank: int) -> tuple[TensorLike, TensorLike, TensorLike]:
         # Evaluate norms for columns and rows
         col_probs, row_probs = self._importance(X)
 
-        column_indices = torch.sort(torch.argsort(col_probs, descending=True)[:rank]).values
-        row_indices = torch.sort(torch.argsort(row_probs, descending=True)[:rank]).values
+        #topk most important indices
+        column_indices = tl.sort(tl.argsort(col_probs, 0)[-rank:], 0)
+        row_indices = tl.sort(tl.argsort(row_probs, 0)[-rank:], 0)
 
         C_matrix = X[:, column_indices] 
         R_matrix = X[row_indices, :]
@@ -156,11 +149,11 @@ class CURDecomposition(Decomposer):
 
         return C_matrix, W_matrix, R_matrix
 
-    def compose(self, *factors, **kwargs):
+    def compose(self, *factors: TensorLike, **kwargs) -> TensorLike:
         C, U, R = factors
-        return C @ U @ R
+        return tl.matmul(C, tl.matmul(U, R))
 
-__local_names = locals()
+__local_names = locals() 
 
 DECOMPOSERS: Dict[str, Decomposer]= {
     name: __local_names[name] for name in __all__
